@@ -24,9 +24,16 @@ import numpy as np
 import torch
 from torch.utils.data import TensorDataset, DataLoader, RandomSampler, SequentialSampler
 
-from pytorch_pretrained_bert.tokenization import BertTokenizer
-from pytorch_pretrained_bert.modeling import BertForQuestionAnswering
-from pytorch_pretrained_bert.optimization import BertAdam
+# from pytorch_pretrained_bert.tokenization import BertTokenizer
+# from pytorch_pretrained_bert.modeling import BertForQuestionAnswering
+# from pytorch_pretrained_bert.optimization import BertAdam
+
+from transformers import (
+    BertTokenizer,
+    BertForQuestionAnswering,
+    get_linear_schedule_with_warmup,
+)
+from torch.optim import AdamW
 
 import squad_data_utils as data_utils
 import modelconfig
@@ -128,10 +135,17 @@ def train(args):
             optimizer = FP16_Optimizer(optimizer, static_loss_scale=args.loss_scale)
 
     else:
-        optimizer = BertAdam(optimizer_grouped_parameters,
-                             lr=args.learning_rate,
-                             warmup=args.warmup_proportion,
-                             t_total=t_total)
+        # optimizer = BertAdam(optimizer_grouped_parameters,
+        #                      lr=args.learning_rate,
+        #                      warmup=args.warmup_proportion,
+        #                      t_total=t_total)
+
+        optimizer = AdamW(model.parameters(), lr=args.learning_rate, weight_decay=0.01)
+        scheduler = get_linear_schedule_with_warmup(
+            optimizer,
+            num_warmup_steps=int(args.warmup_proportion * num_train_steps),
+            num_training_steps=num_train_steps,
+        )
 
     global_step = 0
     model.train()
@@ -139,7 +153,15 @@ def train(args):
         for step, batch in enumerate(train_dataloader):
             batch = tuple(t.cuda() for t in batch)
             input_ids, segment_ids, input_mask, start_positions, end_positions = batch
-            loss = model(input_ids, segment_ids, input_mask, start_positions, end_positions)
+            # loss = model(input_ids, segment_ids, input_mask, start_positions, end_positions)
+            output = model(
+                input_ids=input_ids,
+                attention_mask=input_mask,
+                token_type_ids=segment_ids,
+                start_positions=start_positions,
+                end_positions=end_positions,
+            )
+            loss = output.loss
 
             if args.gradient_accumulation_steps > 1:
                 loss = loss / args.gradient_accumulation_steps
@@ -149,10 +171,11 @@ def train(args):
                 loss.backward()
             if (step + 1) % args.gradient_accumulation_steps == 0:
                 # modify learning rate with special warm up BERT uses
-                lr_this_step = args.learning_rate * warmup_linear(global_step/t_total, args.warmup_proportion)
-                for param_group in optimizer.param_groups:
-                    param_group['lr'] = lr_this_step
+                # lr_this_step = args.learning_rate * warmup_linear(global_step/t_total, args.warmup_proportion)
+                # for param_group in optimizer.param_groups:
+                #     param_group['lr'] = lr_this_step
                 optimizer.step()
+                scheduler.step()
                 optimizer.zero_grad()
                 global_step += 1
             #>>>> perform validation at the end of each epoch .
@@ -164,8 +187,18 @@ def train(args):
                 for step, batch in enumerate(valid_dataloader):
                     batch = tuple(t.cuda() for t in batch) # multi-gpu does scattering it-self
                     input_ids, segment_ids, input_mask, start_positions, end_positions = batch
-                    loss = model(input_ids, segment_ids, input_mask, start_positions, end_positions)
-                    losses.append(loss.data.item()*input_ids.size(0) )
+                    # loss = model(input_ids, segment_ids, input_mask, start_positions, end_positions)
+                    output = model(
+                        input_ids=input_ids,
+                        attention_mask=input_mask,
+                        token_type_ids=segment_ids,
+                        start_positions=start_positions,
+                        end_positions=end_positions,
+                    )
+                    loss = output.loss  # Extract the scalar loss
+                    losses.append(loss.item() * input_ids.size(0))
+
+                    #losses.append(loss.data.item()*input_ids.size(0) )
                     valid_size+=input_ids.size(0)
                 valid_loss=sum(losses)/valid_size
                 logger.info("validation loss: %f", valid_loss)
@@ -211,7 +244,11 @@ def test(args):  # Load a trained model that you have fine-tuned (we assume eval
         input_ids, segment_ids, input_mask= batch
         
         with torch.no_grad():
-            batch_start_logits, batch_end_logits = model(input_ids, segment_ids, input_mask)
+            #batch_start_logits, batch_end_logits = model(input_ids, segment_ids, input_mask)
+            output = model(input_ids=input_ids, token_type_ids=segment_ids,
+                                                      attention_mask=input_mask)
+            batch_start_logits=output.start_logits
+            batch_end_logits=output.end_logits
 
         for i, example_index in enumerate(example_indices):
             start_logits = batch_start_logits[i].detach().cpu().tolist()
@@ -228,7 +265,7 @@ def test(args):  # Load a trained model that you have fine-tuned (we assume eval
 
 
 
-def main():    
+def main():
     parser = argparse.ArgumentParser()
 
     parser.add_argument("--bert_model", default='bert-base', type=str)
@@ -264,7 +301,7 @@ def main():
                         default=False,
                         action='store_true',
                         help="Whether to run eval on the dev set.")
-    
+
     parser.add_argument("--train_batch_size",
                         default=16,
                         type=int,
@@ -277,7 +314,7 @@ def main():
                         default=3e-5,
                         type=float,
                         help="The initial learning rate for Adam.")
-    
+
     parser.add_argument("--num_train_epochs",
                         default=6,
                         type=int,
@@ -291,39 +328,39 @@ def main():
                         type=int,
                         default=0,
                         help="random seed for initialization")
-    
+
     parser.add_argument('--doc_stride',
                         type=int,
                         default=128)
-    
+
     parser.add_argument('--max_query_length',
                         type=int,
                         default=30)
-    
+
     parser.add_argument('--max_answer_length',
                         type=int,
                         default=30)
-    
+
     parser.add_argument('--gradient_accumulation_steps',
                         type=int,
                         default=2)
-    
+
     parser.add_argument('--fp16',
                         default=False,
                         action='store_true',
                         help="Whether to use 16-bit float precision instead of 32-bit")
-    
+
     parser.add_argument('--loss_scale',
                         type=float, default=0,
                         help="Loss scaling to improve fp16 numeric stability. Only used when fp16 set to True.\n"
                              "0 (default value): dynamic loss scaling.\n"
                              "Positive power of 2: static loss scaling value.\n")
-    
+
     parser.add_argument('--n_best_size',
                         type=int,
                         default=20)
-    
-    
+
+
     args = parser.parse_args()
 
     random.seed(args.seed)

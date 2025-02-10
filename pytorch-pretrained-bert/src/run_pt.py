@@ -24,39 +24,48 @@ import numpy as np
 import torch
 from torch.utils.data import TensorDataset, DataLoader, RandomSampler, SequentialSampler
 
-from pytorch_pretrained_bert.tokenization import BertTokenizer
-from pytorch_pretrained_bert.modeling import BertModel, PreTrainedBertModel, BertPreTrainingHeads
+from transformers import BertPreTrainedModel, BertModel, BertForPreTraining
 
-from pytorch_pretrained_bert.optimization import BertAdam
+from transformers import get_linear_schedule_with_warmup
+from torch.optim import AdamW
+
 
 import modelconfig
 
 
-class BertForMTPostTraining(PreTrainedBertModel):
+class BertForMTPostTraining(BertForPreTraining):
     def __init__(self, config):
         super(BertForMTPostTraining, self).__init__(config)
-        self.bert = BertModel(config)
-        self.cls = BertPreTrainingHeads(config, self.bert.embeddings.word_embeddings.weight)
-        self.qa_outputs = torch.nn.Linear(config.hidden_size, 2)
-        self.apply(self.init_bert_weights)
 
-    def forward(self, mode, input_ids, token_type_ids=None, attention_mask=None, masked_lm_labels=None, next_sentence_label=None, start_positions=None, end_positions=None):
-        
-        sequence_output, pooled_output = self.bert(input_ids, token_type_ids, attention_mask, output_all_encoded_layers=False)
-        
-        if mode=="review":
+
+        #self.bert = BertModel(config)
+        #self.cls = BertPreTrainingHeads(config, self.bert.embeddings.word_embeddings.weight)
+        self.qa_outputs = torch.nn.Linear(config.hidden_size, 2)
+        self.init_weights()
+        #self.apply(self.init_weights)
+
+    def forward(self, mode, input_ids, token_type_ids=None, attention_mask=None, masked_lm_labels=None,
+                next_sentence_label=None, start_positions=None, end_positions=None):
+
+        # sequence_output, pooled_output = self.bert(input_ids, token_type_ids, attention_mask,
+        #                                            output_all_encoded_layers=False)
+        outputs = self.bert(input_ids, token_type_ids=token_type_ids, attention_mask=attention_mask)
+        sequence_output = outputs.last_hidden_state
+        pooled_output = outputs.pooler_output
+
+        if mode == "review":
             prediction_scores, seq_relationship_score = self.cls(sequence_output, pooled_output)
             if masked_lm_labels is not None and next_sentence_label is not None:
                 loss_fct = torch.nn.CrossEntropyLoss(ignore_index=-1)
-                masked_lm_loss = loss_fct(prediction_scores.view(-1, self.config.vocab_size), masked_lm_labels.view(-1))        
+                masked_lm_loss = loss_fct(prediction_scores.view(-1, self.config.vocab_size), masked_lm_labels.view(-1))
                 next_sentence_loss = loss_fct(seq_relationship_score.view(-1, 2), next_sentence_label.view(-1))
                 total_loss = masked_lm_loss + next_sentence_loss
-                
+
                 return total_loss
             else:
                 return prediction_scores, seq_relationship_score
 
-        elif mode=="squad":
+        elif mode == "squad":
             logits = self.qa_outputs(sequence_output)
             start_logits, end_logits = logits.split(1, dim=-1)
             start_logits = start_logits.squeeze(-1)
@@ -89,63 +98,68 @@ logging.basicConfig(format='%(asctime)s - %(levelname)s - %(name)s -   %(message
                     level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-def warmup_linear(x, warmup=0.002):
-    if x < warmup:
-        return x/warmup
-    return 1.0 - x
+
+# def warmup_linear(x, warmup=0.002):
+#     if x < warmup:
+#         return x / warmup
+#     return 1.0 - x
+
 
 def train(args):
-    #load squad data for pre-training.
-    
-    args.train_batch_size=int(args.train_batch_size / args.gradient_accumulation_steps)
-    
-    review_train_examples=np.load(os.path.join(args.review_data_dir, "data.npz") )
-    squad_train_examples=np.load(os.path.join(args.squad_data_dir, "data.npz") )
-    
+    # load squad data for pre-training.
+
+    args.train_batch_size = int(args.train_batch_size / args.gradient_accumulation_steps)
+
+    review_train_examples = np.load(os.path.join(args.review_data_dir, "data.npz"))
+    squad_train_examples = np.load(os.path.join(args.squad_data_dir, "data.npz"))
+
     num_train_steps = args.num_train_steps
-    
+
     # load bert pre-train data.
     review_train_data = TensorDataset(
         torch.from_numpy(review_train_examples["input_ids"]),
         torch.from_numpy(review_train_examples["segment_ids"]),
-        torch.from_numpy(review_train_examples["input_mask"]),           
+        torch.from_numpy(review_train_examples["input_mask"]),
         torch.from_numpy(review_train_examples["masked_lm_ids"]),
-        torch.from_numpy(review_train_examples["next_sentence_labels"]) )
-    
-    review_train_dataloader = DataLoader(review_train_data, sampler=RandomSampler(review_train_data), batch_size=args.train_batch_size , drop_last=True)
-    
-    squad_train_data = TensorDataset(
-        torch.from_numpy(squad_train_examples["input_ids"]), 
-        torch.from_numpy(squad_train_examples["segment_ids"]), 
-        torch.from_numpy(squad_train_examples["input_mask"]), 
-        torch.from_numpy(squad_train_examples["start_positions"]), 
-        torch.from_numpy(squad_train_examples["end_positions"] ) )
-    
-    squad_train_dataloader = DataLoader(squad_train_data, sampler=RandomSampler(squad_train_data), batch_size=args.train_batch_size , drop_last=True)
+        torch.from_numpy(review_train_examples["next_sentence_labels"]))
 
-    #we do not have any valiation for pretuning
-    model = BertForMTPostTraining.from_pretrained(modelconfig.MODEL_ARCHIVE_MAP[args.bert_model] )
-    
+    review_train_dataloader = DataLoader(review_train_data, sampler=RandomSampler(review_train_data),
+                                         batch_size=args.train_batch_size, drop_last=True)
+
+    squad_train_data = TensorDataset(
+        torch.from_numpy(squad_train_examples["input_ids"]),
+        torch.from_numpy(squad_train_examples["segment_ids"]),
+        torch.from_numpy(squad_train_examples["input_mask"]),
+        torch.from_numpy(squad_train_examples["start_positions"]),
+        torch.from_numpy(squad_train_examples["end_positions"]))
+
+    squad_train_dataloader = DataLoader(squad_train_data, sampler=RandomSampler(squad_train_data),
+                                        batch_size=args.train_batch_size, drop_last=True)
+
+    # we do not have any valiation for pretuning
+    model = BertForMTPostTraining.from_pretrained(modelconfig.MODEL_ARCHIVE_MAP[args.bert_model])
+
     if args.fp16:
         model.half()
     model.cuda()
-        
+
     # Prepare optimizer
-    param_optimizer = [(k, v) for k, v in model.named_parameters() if v.requires_grad==True]
+    param_optimizer = [(k, v) for k, v in model.named_parameters() if v.requires_grad == True]
     param_optimizer = [n for n in param_optimizer if 'pooler' not in n[0]]
     no_decay = ['bias', 'LayerNorm.bias', 'LayerNorm.weight']
     optimizer_grouped_parameters = [
         {'params': [p for n, p in param_optimizer if not any(nd in n for nd in no_decay)], 'weight_decay': 0.01},
         {'params': [p for n, p in param_optimizer if any(nd in n for nd in no_decay)], 'weight_decay': 0.0}
-        ]
+    ]
     t_total = num_train_steps
-        
+
     if args.fp16:
         try:
             from apex.optimizers import FP16_Optimizer
             from apex.optimizers import FusedAdam
         except ImportError:
-            raise ImportError("Please install apex from https://www.github.com/nvidia/apex to use distributed and fp16 training.")
+            raise ImportError(
+                "Please install apex from https://www.github.com/nvidia/apex to use distributed and fp16 training.")
 
         optimizer = FusedAdam(optimizer_grouped_parameters,
                               lr=args.learning_rate,
@@ -157,91 +171,112 @@ def train(args):
         else:
             optimizer = FP16_Optimizer(optimizer, static_loss_scale=args.loss_scale)
     else:
-        optimizer = BertAdam(optimizer_grouped_parameters,
-                             lr=args.learning_rate,
-                             warmup=args.warmup_proportion,
-                             t_total=t_total)
+        # optimizer = BertAdam(optimizer_grouped_parameters,
+        #                      lr=args.learning_rate,
+        #                      warmup=args.warmup_proportion,
+        #                      t_total=t_total)
 
-    global_step=0
-    step=0
-    batch_loss=0.
+        optimizer = AdamW(
+            optimizer_grouped_parameters,
+            lr=args.learning_rate,
+            betas=(0.9, 0.999),
+            eps=1e-8
+        )
+
+        num_training_steps = t_total
+        num_warmup_steps = int(args.warmup_proportion * num_training_steps)
+
+        scheduler = get_linear_schedule_with_warmup(
+            optimizer,
+            num_warmup_steps=num_warmup_steps,
+            num_training_steps=num_training_steps
+        )
+
+    global_step = 0
+    step = 0
+    batch_loss = 0.
     model.train()
     model.zero_grad()
-    
-    training=True
-    
-    review_iter=iter(review_train_dataloader)
-    squad_iter=iter(squad_train_dataloader)
-    
+
+    training = True
+
+    review_iter = iter(review_train_dataloader)
+    squad_iter = iter(squad_train_dataloader)
+
     while training:
         try:
             batch = next(review_iter)
         except:
-            review_iter=iter(review_train_dataloader)
+            review_iter = iter(review_train_dataloader)
             batch = next(review_iter)
-            
+
         batch = tuple(t.cuda() for t in batch)
-        
+
         input_ids, segment_ids, input_mask, masked_lm_ids, next_sentence_labels = batch
-        
-        review_loss = model("review", input_ids.long(), segment_ids.long(), input_mask.long(), masked_lm_ids.long(), next_sentence_labels.long(), None, None)
-        
+
+        review_loss = model("review", input_ids.long(), segment_ids.long(), input_mask.long(), masked_lm_ids.long(),
+                            next_sentence_labels.long(), None, None)
+
         try:
             batch = next(squad_iter)
         except:
-            squad_iter=iter(squad_train_dataloader)
+            squad_iter = iter(squad_train_dataloader)
             batch = next(squad_iter)
 
         batch = tuple(t.cuda() for t in batch)
         input_ids, segment_ids, input_mask, start_positions, end_positions = batch
-        
-        squad_loss = model("squad", input_ids.long(), segment_ids.long(), input_mask.long(), None, None, start_positions.long(), end_positions.long() )
 
-        loss=review_loss + squad_loss
+        squad_loss = model("squad", input_ids.long(), segment_ids.long(), input_mask.long(), None, None,
+                           start_positions.long(), end_positions.long())
+
+        loss = review_loss + squad_loss
 
         if args.gradient_accumulation_steps > 1:
             loss = loss / args.gradient_accumulation_steps
-        batch_loss+=loss
+        batch_loss += loss
         if args.fp16:
             optimizer.backward(loss)
         else:
             loss.backward()
-        
+
         if (step + 1) % args.gradient_accumulation_steps == 0:
             # modify learning rate with special warm up BERT uses
-            lr_this_step = args.learning_rate * warmup_linear(global_step/t_total, args.warmup_proportion)
-            for param_group in optimizer.param_groups:
-                param_group['lr'] = lr_this_step
+            # lr_this_step = args.learning_rate * warmup_linear(global_step / t_total, args.warmup_proportion)
+            # for param_group in optimizer.param_groups:
+            #     param_group['lr'] = lr_this_step
             optimizer.step()
+            scheduler.step()
             optimizer.zero_grad()
             global_step += 1
-            if global_step % 50 ==0:
+            if global_step % 50 == 0:
                 logging.info("step %d batch_loss %f ", global_step, batch_loss)
-            batch_loss=0.
+            batch_loss = 0.
 
-            if global_step % args.save_checkpoints_steps==0:
+            if global_step % args.save_checkpoints_steps == 0:
                 model.float()
-                torch.save(model.state_dict(), os.path.join(args.output_dir, "pytorch_model_"+str(global_step)+".bin") )
+                torch.save(model.state_dict(),
+                           os.path.join(args.output_dir, "pytorch_model_" + str(global_step) + ".bin"))
                 if args.fp16:
                     model.half()
-            if global_step>=num_train_steps:
-                training=False
+            if global_step >= num_train_steps:
+                training = False
                 break
-        step+=1
+        step += 1
     model.float()
-    torch.save(model.state_dict(), os.path.join(args.output_dir, "pytorch_model.bin") )
+    torch.save(model.state_dict(), os.path.join(args.output_dir, "pytorch_model.bin"))
+
 
 def main():
-    
     parser = argparse.ArgumentParser()
-    parser.add_argument("--bert_model", default="bert-base", type=str, required=True, help="pretrained weights of bert.")
+    parser.add_argument("--bert_model", default="bert-base", type=str, required=True,
+                        help="pretrained weights of bert.")
 
     parser.add_argument("--review_data_dir",
                         default=None,
                         type=str,
                         required=True,
                         help="dir of review numpy file dir.")
-    
+
     parser.add_argument("--squad_data_dir",
                         default=None,
                         type=str,
@@ -253,10 +288,10 @@ def main():
                         type=str,
                         required=True,
                         help="The output directory where the model predictions and checkpoints will be written.")
-    
+
     parser.add_argument("--train_batch_size", default=16,
                         type=int, help="training batch size for both review and squad.")
-        
+
     parser.add_argument("--do_train", default=False, action="store_true", help="Whether to run training.")
 
     parser.add_argument("--learning_rate", default=3e-5, type=float, help="The initial learning rate for Adam.")
@@ -276,12 +311,12 @@ def main():
     parser.add_argument('--gradient_accumulation_steps',
                         type=int,
                         default=2)
-    
+
     parser.add_argument('--fp16',
                         default=False,
                         action='store_true',
                         help="Whether to use 16-bit float precision instead of 32-bit")
-    
+
     parser.add_argument('--loss_scale',
                         type=float, default=0,
                         help="Loss scaling to improve fp16 numeric stability. Only used when fp16 set to True.\n"
@@ -297,8 +332,9 @@ def main():
 
     if args.do_train:
         logger.info("***** Running training *****")
-        logger.info("  Batch size = %d", args.train_batch_size)        
+        logger.info("  Batch size = %d", args.train_batch_size)
         train(args)
+
 
 if __name__ == "__main__":
     main()
