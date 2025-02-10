@@ -16,14 +16,21 @@
 #define your pre-trained (post-trained) models here with their paths.
 
 MODEL_ARCHIVE_MAP = {
-    'bert-base': '../pt_model/bert-base/',
-    'bert-large': '../pt_model/bert-large/',
+    # 'bert-base': '../pt_model/bert-base/',
+    # 'bert-large': '../pt_model/bert-large/',
+    'bert-base': 'bert-base-uncased',
+    'bert-large': 'bert-large-uncased',
 
-    'laptop_pt_review': '../pt_model/laptop_pt_review/',
-    'rest_pt_review': '../pt_model/rest_pt_review/',
+    # 'laptop_pt_review': '../pt_model/laptop_pt_review/',
+    # 'rest_pt_review': '../pt_model/rest_pt_review/',
+
+    'laptop_pt_review': '../../../BERT-FOR-RRC-ABSA/pt_model/laptop_pt_review/',
+    'rest_pt_review': '../../../BERT-FOR-RRC-ABSA/pt_model/rest_pt_review/',
     
     'pt_squad': '../pt_model/pt_squad/',
     
-    'laptop_pt': '../pt_model/laptop_pt/',
-    'rest_pt': '../pt_model/rest_pt/',  
+    # 'laptop_pt': '../pt_model/laptop_pt/',
+    # 'rest_pt': '../pt_model/rest_pt/', 
+    'laptop_pt': '../../../BERT-FOR-RRC-ABSA/pt_model/laptop_pt/',
+    'rest_pt': '../../../BERT-FOR-RRC-ABSA/pt_model/rest_pt/',  
 }

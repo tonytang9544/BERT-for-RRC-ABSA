@@ -18,7 +18,8 @@ import logging
 import collections
 import random
 import argparse
-from pytorch_pretrained_bert import tokenization
+# from pytorch_pretrained_bert import tokenization
+from transformers import BertTokenizer
 import numpy as np
 
 import modelconfig
@@ -400,7 +401,7 @@ def main():
     random.seed(args.random_seed)
     np.random.seed(args.random_seed)
     
-    tokenizer = tokenization.BertTokenizer.from_pretrained(modelconfig.MODEL_ARCHIVE_MAP[args.bert_model]) 
+    tokenizer = BertTokenizer.from_pretrained(modelconfig.MODEL_ARCHIVE_MAP[args.bert_model]) 
     rng = random.Random(args.random_seed)
     
     instances = create_training_instances(

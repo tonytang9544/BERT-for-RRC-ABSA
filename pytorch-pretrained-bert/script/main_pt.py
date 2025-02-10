@@ -3,24 +3,31 @@ import sys
 import subprocess
 import shutil
 
-def main():
+def main(domain="laptop", dp=5, steps=10000, cuda_device="0"):
     if len(sys.argv) < 4:
         print("Usage: python script.py <domain> <dupe_factor> <steps> [cuda_device]")
         sys.exit(1)
 
-    domain = sys.argv[1]
-    dp = sys.argv[2]
-    steps = sys.argv[3]
-    cuda_device = sys.argv[4] if len(sys.argv) > 4 else None
+    # domain = sys.argv[1]
+    # dp = sys.argv[2]
+    # steps = sys.argv[3]
+    # cuda_device = sys.argv[4] if len(sys.argv) > 4 else None
 
     if cuda_device:
         os.environ["CUDA_VISIBLE_DEVICES"] = cuda_device
         print(f"Using CUDA device {cuda_device}")
 
     BERT = "bert-base"
+    
+    ######################
+    # modify this to your local folder for store large files.
+    dump_folder = "../../../BERT-for-RRC-ABSA_dependent_files"
+
 
     # Generate review pretraining data
-    review_data_path = f"../domain_corpus/{domain}/data.npz"
+    # review_data_path = f"../domain_corpus/{domain}/data.npz"
+    review_data_path = os.path.join(dump_folder, "domain_corpus", domain, "data.npz")
+    # print(review_data_path)
     if not os.path.exists(review_data_path):
         subprocess.run([
             "python", "../src/gen_pt_review.py",
