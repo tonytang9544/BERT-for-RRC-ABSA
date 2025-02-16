@@ -347,6 +347,30 @@ def truncate_seq_pair(tokens_a, tokens_b, max_num_tokens, rng):
             trunc_tokens.pop()
 
 
+def gen_pt_review(
+        bert_model, 
+        input_file,
+        output_file, 
+        max_seq_length=320, 
+        short_seq_prob=0.1, 
+        masked_lm_prob=0.15, 
+        max_predictions_per_seq=40,
+        dupe_factor=10, 
+        random_seed=12345):
+    
+    random.seed(random_seed)
+    np.random.seed(random_seed)
+    
+    tokenizer = BertTokenizer.from_pretrained(modelconfig.MODEL_ARCHIVE_MAP[bert_model]) 
+    rng = random.Random(random_seed)
+    
+    instances = create_training_instances(
+        input_file, tokenizer, max_seq_length, dupe_factor, short_seq_prob, 
+        masked_lm_prob, max_predictions_per_seq, rng)
+
+    write_instance_to_example_files(instances, tokenizer, max_seq_length, max_predictions_per_seq, output_file)
+
+
 def main():
     
     parser = argparse.ArgumentParser()

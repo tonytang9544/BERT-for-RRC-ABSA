@@ -266,6 +266,11 @@ def train(args):
     torch.save(model.state_dict(), os.path.join(args.output_dir, "pytorch_model.bin"))
 
 
+def run_pt(
+        
+):
+    
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--bert_model", default="bert-base", type=str, required=True,
