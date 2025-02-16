@@ -15,15 +15,17 @@
 
 #define your pre-trained (post-trained) models here with their paths.
 
-MODEL_ARCHIVE_MAP = {
-    'bert-base': '../pt_model/bert-base/',
-    'bert-large': '../pt_model/bert-large/',
+dependency_folder = "../../../ERT-for-RRC-ABSA_dependent_files"
 
-    'laptop_pt_review': '../pt_model/laptop_pt_review/',
-    'rest_pt_review': '../pt_model/rest_pt_review/',
+MODEL_ARCHIVE_MAP = {
+    'bert-base': 'bert-base-uncase',
+    'bert-large': 'bert-large-uncase',
+
+    'laptop_pt_review': f'{dependency_folder}/pt_model/laptop_pt_review/',
+    'rest_pt_review': f'{dependency_folder}/pt_model/rest_pt_review/',
     
-    'pt_squad': '../pt_model/pt_squad/',
+    'pt_squad': f'{dependency_folder}/pt_model/pt_squad/',
     
-    'laptop_pt': '../pt_model/laptop_pt/',
-    'rest_pt': '../pt_model/rest_pt/',  
+    'laptop_pt': f'{dependency_folder}/pt_model/laptop_pt/',
+    'rest_pt': f'{dependency_folder}/pt_model/rest_pt/',  
 }
