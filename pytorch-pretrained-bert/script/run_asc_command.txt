@@ -1,0 +1,2 @@
+# open script folder in terminal
+bash run_absa.sh asc laptop_pt laptop pt_asc 10 0

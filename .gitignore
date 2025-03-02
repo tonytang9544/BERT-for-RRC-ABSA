@@ -141,3 +141,8 @@ eval
 pt_model
 pytorch-pretrained-bert/laptop-dom/
 models
+pytorch-pretrained-bert/run
+pytorch-pretrained-bert/squad
+pytorch-pretrained-bert/pt_model
+pytorch-pretrained-bert/domain_corpus
+pytorch-pretrained-bert/data

@@ -14,11 +14,26 @@
 # limitations under the License.
 
 
-from pytorch_pretrained_bert.tokenization import whitespace_tokenize, BasicTokenizer, BertTokenizer
+# from transformers import whitespace_tokenize, BasicTokenizer, BertTokenizer
+
+from transformers import BasicTokenizer, BertTokenizer
 
 import json
 import collections
 import math
+
+import logging
+
+logger = logging.getLogger(__name__)
+
+def whitespace_tokenize(text):
+    """copied from pytorch-pretrained-bert"""
+    """Runs basic whitespace cleaning and splitting on a piece of text."""
+    text = text.strip()
+    if not text:
+        return []
+    tokens = text.split()
+    return tokens
 
 class SquadExample(object):
     """A single training/test example for simple sequence classification."""
@@ -124,6 +139,8 @@ def read_squad_examples(input_file, is_training):
                     actual_text = " ".join(doc_tokens[start_position:(end_position + 1)])
                     cleaned_answer_text = " ".join(
                         whitespace_tokenize(orig_answer_text))
+                    # cleaned_answer_text = "".join(
+                    #     orig_answer_text)
                     if actual_text.find(cleaned_answer_text) == -1:
                         logger.warning("Could not find answer: '%s' vs. '%s'",
                                            actual_text, cleaned_answer_text)

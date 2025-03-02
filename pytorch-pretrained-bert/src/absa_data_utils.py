@@ -19,7 +19,8 @@ import os
 from collections import defaultdict
 import random
 
-from pytorch_pretrained_bert.tokenization import BertTokenizer
+# from pytorch_pretrained_bert.tokenization import BertTokenizer
+from transformers import BertTokenizer
 
 class ABSATokenizer(BertTokenizer):     
     def subword_tokenize(self, tokens, labels): # for AE

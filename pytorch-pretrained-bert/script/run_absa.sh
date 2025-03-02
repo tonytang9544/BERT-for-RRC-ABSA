@@ -17,13 +17,15 @@ if ! [ -z $6 ] ; then
 fi
 
 
-DATA_DIR="../"$task/$domain
+DATA_DIR="../data/"$task/$domain
 
 for run in `seq 1 1 $runs`
 do
     OUTPUT_DIR="../run/"$run_dir/$domain/$run
 
     mkdir -p $OUTPUT_DIR
+
+    # check if valid.json is present
     if ! [ -e $OUTPUT_DIR/"valid.json" ] ; then
         python ../src/run_$task.py \
             --bert_model $bert --do_train --do_valid \
@@ -36,6 +38,8 @@ do
             --bert_model $bert --do_eval --max_seq_length 100 \
             --output_dir $OUTPUT_DIR --data_dir $DATA_DIR --seed $run > $OUTPUT_DIR/test_log.txt 2>&1
     fi
+
+    # if both predictions.json and model.pt are present, remove model.pt
     if [ -e $OUTPUT_DIR/"predictions.json" ] && [ -e $OUTPUT_DIR/model.pt ] ; then
         rm $OUTPUT_DIR/model.pt
     fi
