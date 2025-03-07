@@ -26,4 +26,7 @@ MODEL_ARCHIVE_MAP = {
     
     'laptop_pt': '../pt_model/laptop_pt/',
     'rest_pt': '../pt_model/rest_pt/',  
+
+    'bert-large-20250306': "../pt_model/20250306_bert_large_laptop_pt/",
+    "t5-base": "google-t5/t5-base"
 }

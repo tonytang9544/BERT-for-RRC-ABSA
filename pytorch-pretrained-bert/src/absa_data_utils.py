@@ -20,9 +20,10 @@ from collections import defaultdict
 import random
 
 # from pytorch_pretrained_bert.tokenization import BertTokenizer
-from transformers import BertTokenizer
+from transformers import BertTokenizer, AutoTokenizer
 
 class ABSATokenizer(BertTokenizer):     
+# class ABSATokenizer(AutoTokenizer):
     def subword_tokenize(self, tokens, labels): # for AE
         split_tokens, split_labels= [], []
         idx_map=[]

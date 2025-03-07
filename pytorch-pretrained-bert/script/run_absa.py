@@ -36,7 +36,8 @@ for run in range(1, runs + 1):
                 "--bert_model", bert, "--do_train", "--do_valid",
                 "--max_seq_length", "100", "--train_batch_size", "32", 
                 "--learning_rate", "3e-5", "--num_train_epochs", "4",
-                "--output_dir", output_dir, "--data_dir", data_dir, "--seed", str(run)
+                "--output_dir", output_dir, "--data_dir", data_dir, "--seed", str(run),
+                # "--tokenizer", "bert-large"
             ], stdout=log_file, stderr=subprocess.STDOUT)
 
     # Check if predictions.json doesn't exist, then run evaluation script
@@ -45,7 +46,8 @@ for run in range(1, runs + 1):
             subprocess.run([
                 "python", f"../src/run_{task}.py",
                 "--bert_model", bert, "--do_eval", "--max_seq_length", "100",
-                "--output_dir", output_dir, "--data_dir", data_dir, "--seed", str(run)
+                "--output_dir", output_dir, "--data_dir", data_dir, "--seed", str(run),
+                # "--tokenizer", "bert-large"
             ], stdout=log_file, stderr=subprocess.STDOUT)
 
     # If predictions.json and model.pt exist, remove model.pt

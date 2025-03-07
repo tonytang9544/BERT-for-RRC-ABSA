@@ -1,0 +1,2 @@
+bash pt.sh laptop 5 70000 0
+

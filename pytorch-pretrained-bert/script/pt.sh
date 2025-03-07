@@ -14,7 +14,7 @@ fi
 
 #conda activate p3-torch10
 
-BERT="bert-base"
+BERT="bert-large"
 
 if ! [ -e ../domain_corpus/${domain}/data.npz ] ; then
     python ../src/gen_pt_review.py \
@@ -38,7 +38,7 @@ if ! [ -e ../squad/data.npz ] ; then
         --seed=12345 > ../squad/data.log 2>&1
 fi
 
-OUT_DIR="../pt_model/${domain}_pt"
+OUT_DIR="../pt_model/20250306_${BERT}_${domain}_pt"
 mkdir -p $OUT_DIR
 
 python ../src/run_pt.py \
@@ -46,12 +46,14 @@ python ../src/run_pt.py \
     --review_data_dir ../domain_corpus/${domain} \
     --squad_data_dir ../squad/ \
     --output_dir $OUT_DIR \
-    --train_batch_size 16 \
+    --train_batch_size 8 \
     --do_train \
     --num_train_steps=$steps \
-    --gradient_accumulation_steps=2 \
+    --gradient_accumulation_steps=8 \
     --fp16 --loss_scale 2 \
     --save_checkpoints_steps 10000 > $OUT_DIR/train.log 2>&1
 
-cp ../pt_model/$BERT/vocab.txt ./$OUT_DIR
-cp ../pt_model/$BERT/bert_config.json ./$OUT_DIR
+# below tries to copy the vocab.txt from the pretrained model to the post-trained model location.
+# If use huggingface API, these can be found at .cache/huggingface/hub/...
+# cp ../pt_model/$BERT/vocab.txt ./$OUT_DIR
+# cp ../pt_model/$BERT/bert_config.json ./$OUT_DIR

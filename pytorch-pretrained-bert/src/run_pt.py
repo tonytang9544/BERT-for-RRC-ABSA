@@ -154,22 +154,32 @@ def train(args):
     t_total = num_train_steps
 
     if args.fp16:
-        try:
-            from apex.optimizers import FP16_Optimizer
-            from apex.optimizers import FusedAdam
-        except ImportError:
-            raise ImportError(
-                "Please install apex from https://www.github.com/nvidia/apex to use distributed and fp16 training.")
+        # try:
+        #     from apex.optimizers import FP16_Optimizer
+        #     from apex.optimizers import FusedAdam
+ 
+        # except ImportError:
+        #     raise ImportError(
+        #         "Please install apex from https://www.github.com/nvidia/apex to use distributed and fp16 training.")
 
-        optimizer = FusedAdam(optimizer_grouped_parameters,
-                              lr=args.learning_rate,
-                              bias_correction=False,
-                              max_grad_norm=1.0)
+        # optimizer = FusedAdam(optimizer_grouped_parameters,
+        #                       lr=args.learning_rate,
+        #                       bias_correction=False,
+        #                       max_grad_norm=1.0)
 
-        if args.loss_scale == 0:
-            optimizer = FP16_Optimizer(optimizer, dynamic_loss_scale=True)
-        else:
-            optimizer = FP16_Optimizer(optimizer, static_loss_scale=args.loss_scale)
+        # if args.loss_scale == 0:
+        #     optimizer = FP16_Optimizer(optimizer, dynamic_loss_scale=True)
+        # else:
+        #     optimizer = FP16_Optimizer(optimizer, static_loss_scale=args.loss_scale)
+
+        optimizer = AdamW(
+            optimizer_grouped_parameters,
+            lr=args.learning_rate,
+            betas=(0.9, 0.999),
+            eps=1e-8,
+            fused=True
+        )
+
     else:
         # optimizer = BertAdam(optimizer_grouped_parameters,
         #                      lr=args.learning_rate,
@@ -183,14 +193,14 @@ def train(args):
             eps=1e-8
         )
 
-        num_training_steps = t_total
-        num_warmup_steps = int(args.warmup_proportion * num_training_steps)
+    num_training_steps = t_total
+    num_warmup_steps = int(args.warmup_proportion * num_training_steps)
 
-        scheduler = get_linear_schedule_with_warmup(
-            optimizer,
-            num_warmup_steps=num_warmup_steps,
-            num_training_steps=num_training_steps
-        )
+    scheduler = get_linear_schedule_with_warmup(
+        optimizer,
+        num_warmup_steps=num_warmup_steps,
+        num_training_steps=num_training_steps
+    )
 
     global_step = 0
     step = 0
@@ -234,10 +244,12 @@ def train(args):
         if args.gradient_accumulation_steps > 1:
             loss = loss / args.gradient_accumulation_steps
         batch_loss += loss
-        if args.fp16:
-            optimizer.backward(loss)
-        else:
-            loss.backward()
+        # if args.fp16:
+        #     optimizer.backward(loss)
+        # else:
+        #     loss.backward()
+
+        loss.backward()
 
         if (step + 1) % args.gradient_accumulation_steps == 0:
             # modify learning rate with special warm up BERT uses

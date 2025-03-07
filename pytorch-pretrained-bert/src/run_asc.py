@@ -29,7 +29,7 @@ from torch.utils.data import TensorDataset, DataLoader, RandomSampler, Sequentia
 # from pytorch_pretrained_bert.optimization import BertAdam
 
 from torch.utils.data import TensorDataset, DataLoader, RandomSampler, SequentialSampler
-from transformers import BertTokenizer, BertForSequenceClassification
+from transformers import BertTokenizer, BertForSequenceClassification, AutoTokenizer, AutoModel
 from torch.optim import AdamW
 from transformers import get_linear_schedule_with_warmup
 
@@ -52,7 +52,10 @@ def warmup_linear(x, warmup=0.002):
 def train(args):
     processor = data_utils.AscProcessor()
     label_list = processor.get_labels()
+    # print(modelconfig.MODEL_ARCHIVE_MAP[args.tokenizer])
     tokenizer = ABSATokenizer.from_pretrained(modelconfig.MODEL_ARCHIVE_MAP[args.bert_model])
+    # tokenizer = AutoTokenizer.from_pretrained(modelconfig.MODEL_ARCHIVE_MAP[args.bert_model])
+
     train_examples = processor.get_train_examples(args.data_dir)
     num_train_steps = int(len(train_examples) / args.train_batch_size) * args.num_train_epochs
 
@@ -97,6 +100,9 @@ def train(args):
     #<<<<< end of validation declaration
 
     model = BertForSequenceClassification.from_pretrained(modelconfig.MODEL_ARCHIVE_MAP[args.bert_model], num_labels = len(label_list) )
+    # model = AutoModel.from_pretrained(modelconfig.MODEL_ARCHIVE_MAP[args.bert_model], num_labels = len(label_list) )
+    if args.half:
+        model.half()
     model.cuda()
     # Prepare optimizer
     param_optimizer = [(k, v) for k, v in model.named_parameters() if v.requires_grad==True]
@@ -115,7 +121,9 @@ def train(args):
     optimizer = AdamW(
         optimizer_grouped_parameters, 
         lr=args.learning_rate, 
-        eps=1e-8)
+        eps=1e-8,
+        fused=True)
+    
     scheduler = get_linear_schedule_with_warmup(
         optimizer, 
         num_warmup_steps=int(args.warmup_proportion * num_train_steps),
@@ -185,7 +193,10 @@ def train(args):
 def test(args):  # Load a trained model that you have fine-tuned (we assume evaluate on cpu)    
     processor = data_utils.AscProcessor()
     label_list = processor.get_labels()
+    
     tokenizer = BertTokenizer.from_pretrained(modelconfig.MODEL_ARCHIVE_MAP[args.bert_model])
+    # tokenizer = .from_pretrained(modelconfig.MODEL_ARCHIVE_MAP[args.bert_model])
+
     eval_examples = processor.get_test_examples(args.data_dir)
     eval_features = data_utils.convert_examples_to_features(eval_examples, label_list, args.max_seq_length, tokenizer, "asc")
 
@@ -205,6 +216,8 @@ def test(args):  # Load a trained model that you have fine-tuned (we assume eval
     # model = BertForSequenceClassification.from_pretrained(modelconfig.MODEL_ARCHIVE_MAP[args.bert_model], num_labels=len(label_list))
 
     model = torch.load(os.path.join(args.output_dir, "model.pt"), weights_only=False)
+    if args.half:
+        model.half()
     model.cuda()
     model.eval()
     
@@ -236,7 +249,9 @@ def main():
     parser = argparse.ArgumentParser()
 
     # parser.add_argument("--bert_model", default='bert-base', type=str)
-    parser.add_argument("--bert_model", default='bert-base-uncased', type=str)
+    parser.add_argument("--bert_model", default='bert-base-uncased', type=str, required=True)
+
+    # parser.add_argument("--tokenizer", default='bert-large', type=str)
 
     parser.add_argument("--data_dir",
                         default=None,
@@ -297,6 +312,11 @@ def main():
                         default=0,
                         help="random seed for initialization")
     
+    parser.add_argument('--half',
+                        default=False,
+                        action='store_true',
+                        help="half-precision")
+        
     args = parser.parse_args()
     
     random.seed(args.seed)

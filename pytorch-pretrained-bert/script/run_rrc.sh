@@ -27,7 +27,7 @@ do
         python ../src/run_rrc.py \
             --bert_model $bert --do_train --do_valid \
             --gradient_accumulation_steps 2 \
-            --max_seq_length 320 --train_batch_size 16 --learning_rate 3e-5 --num_train_epochs 4 \
+            --max_seq_length 320 --train_batch_size 16 --learning_rate 3e-5 --num_train_epochs 10 \
             --output_dir $OUTPUT_DIR --data_dir $DATA_DIR --seed $run > $OUTPUT_DIR/train_log.txt 2>&1
     fi
 
