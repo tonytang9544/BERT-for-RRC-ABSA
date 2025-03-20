@@ -168,9 +168,9 @@ def train(args):
                 end_positions=end_positions,
             )
             loss = output.loss
-            # print(output.start_logits)
-            # print(output.start_logits.shape)
-            # input("press any key")
+            print(output.start_logits)
+            print(output.start_logits.shape)
+            input("press any key")
 
             if args.gradient_accumulation_steps > 1:
                 loss = loss / args.gradient_accumulation_steps
@@ -243,9 +243,7 @@ def test(args):  # Load a trained model that you have fine-tuned (we assume eval
     eval_sampler = SequentialSampler(eval_data)
     eval_dataloader = DataLoader(eval_data, sampler=eval_sampler, batch_size=args.eval_batch_size)
 
-    # model = torch.load(os.path.join(args.output_dir, "model.pt") )
-    model = torch.load(os.path.join(args.output_dir, "model.pt"), weights_only=False )
-
+    model = torch.load(os.path.join(args.output_dir, "model.pt") )
     model.cuda()
     model.eval()
     all_results = []
@@ -277,102 +275,117 @@ def test(args):  # Load a trained model that you have fine-tuned (we assume eval
 
 
 def main():
+    # parser = argparse.ArgumentParser()
+
+    # parser.add_argument("--bert_model", default='bert-base', type=str)
+
+    # parser.add_argument("--data_dir",
+    #                     default=None,
+    #                     type=str,
+    #                     required=True,
+    #                     help="The input data dir containing json files.")
+
+    # parser.add_argument("--output_dir",
+    #                     default=None,
+    #                     type=str,
+    #                     required=True,
+    #                     help="The output directory where the model predictions and checkpoints will be written.")
+
+    # ## Other parameters
+    # parser.add_argument("--max_seq_length",
+    #                     default=320,
+    #                     type=int,
+    #                     help="The maximum total input sequence length after WordPiece tokenization. \n"
+    #                          "Sequences longer than this will be truncated, and sequences shorter \n"
+    #                          "than this will be padded.")
+    # parser.add_argument("--do_train",
+    #                     default=False,
+    #                     action='store_true',
+    #                     help="Whether to run training.")
+    # parser.add_argument("--do_valid",
+    #                     default=False,
+    #                     action='store_true',
+    #                     help="Whether to run training.")
+    # parser.add_argument("--do_eval",
+    #                     default=False,
+    #                     action='store_true',
+    #                     help="Whether to run eval on the dev set.")
+
+    # parser.add_argument("--train_batch_size",
+    #                     default=16,
+    #                     type=int,
+    #                     help="Total batch size for training.")
+    # parser.add_argument("--eval_batch_size",
+    #                     default=8,
+    #                     type=int,
+    #                     help="Total batch size for eval.")
+    # parser.add_argument("--learning_rate",
+    #                     default=3e-5,
+    #                     type=float,
+    #                     help="The initial learning rate for Adam.")
+
+    # parser.add_argument("--num_train_epochs",
+    #                     default=6,
+    #                     type=int,
+    #                     help="Total number of training epochs to perform.")
+    # parser.add_argument("--warmup_proportion",
+    #                     default=0.1,
+    #                     type=float,
+    #                     help="Proportion of training to perform linear learning rate warmup for. "
+    #                          "E.g., 0.1 = 10%% of training.")
+    # parser.add_argument('--seed',
+    #                     type=int,
+    #                     default=0,
+    #                     help="random seed for initialization")
+
+    # parser.add_argument('--doc_stride',
+    #                     type=int,
+    #                     default=128)
+
+    # parser.add_argument('--max_query_length',
+    #                     type=int,
+    #                     default=30)
+
+    # parser.add_argument('--max_answer_length',
+    #                     type=int,
+    #                     default=30)
+
+    # parser.add_argument('--gradient_accumulation_steps',
+    #                     type=int,
+    #                     default=2)
+
+    # parser.add_argument('--fp16',
+    #                     default=False,
+    #                     action='store_true',
+    #                     help="Whether to use 16-bit float precision instead of 32-bit")
+
+    # parser.add_argument('--loss_scale',
+    #                     type=float, default=0,
+    #                     help="Loss scaling to improve fp16 numeric stability. Only used when fp16 set to True.\n"
+    #                          "0 (default value): dynamic loss scaling.\n"
+    #                          "Positive power of 2: static loss scaling value.\n")
+
+    # parser.add_argument('--n_best_size',
+    #                     type=int,
+    #                     default=20)
+
+
+    # args = parser.parse_args()
+
+    from dataclasses import make_dataclass
     parser = argparse.ArgumentParser()
 
-    parser.add_argument("--bert_model", default='bert-base', type=str)
-
-    parser.add_argument("--data_dir",
+    parser.add_argument("--config_dir",
                         default=None,
                         type=str,
                         required=True,
-                        help="The input data dir containing json files.")
+                        help="The config json file directory")
+    
+    parsed_args = parser.parse_args()
 
-    parser.add_argument("--output_dir",
-                        default=None,
-                        type=str,
-                        required=True,
-                        help="The output directory where the model predictions and checkpoints will be written.")
+    with open(parsed_args.config_dir, "r") as js_file:
+        args = make_dataclass(json.load(js_file))
 
-    ## Other parameters
-    parser.add_argument("--max_seq_length",
-                        default=320,
-                        type=int,
-                        help="The maximum total input sequence length after WordPiece tokenization. \n"
-                             "Sequences longer than this will be truncated, and sequences shorter \n"
-                             "than this will be padded.")
-    parser.add_argument("--do_train",
-                        default=False,
-                        action='store_true',
-                        help="Whether to run training.")
-    parser.add_argument("--do_valid",
-                        default=False,
-                        action='store_true',
-                        help="Whether to run training.")
-    parser.add_argument("--do_eval",
-                        default=False,
-                        action='store_true',
-                        help="Whether to run eval on the dev set.")
-
-    parser.add_argument("--train_batch_size",
-                        default=16,
-                        type=int,
-                        help="Total batch size for training.")
-    parser.add_argument("--eval_batch_size",
-                        default=8,
-                        type=int,
-                        help="Total batch size for eval.")
-    parser.add_argument("--learning_rate",
-                        default=3e-5,
-                        type=float,
-                        help="The initial learning rate for Adam.")
-
-    parser.add_argument("--num_train_epochs",
-                        default=6,
-                        type=int,
-                        help="Total number of training epochs to perform.")
-    parser.add_argument("--warmup_proportion",
-                        default=0.1,
-                        type=float,
-                        help="Proportion of training to perform linear learning rate warmup for. "
-                             "E.g., 0.1 = 10%% of training.")
-    parser.add_argument('--seed',
-                        type=int,
-                        default=0,
-                        help="random seed for initialization")
-
-    parser.add_argument('--doc_stride',
-                        type=int,
-                        default=128)
-
-    parser.add_argument('--max_query_length',
-                        type=int,
-                        default=30)
-
-    parser.add_argument('--max_answer_length',
-                        type=int,
-                        default=30)
-
-    parser.add_argument('--gradient_accumulation_steps',
-                        type=int,
-                        default=2)
-
-    parser.add_argument('--fp16',
-                        default=False,
-                        action='store_true',
-                        help="Whether to use 16-bit float precision instead of 32-bit")
-
-    parser.add_argument('--loss_scale',
-                        type=float, default=0,
-                        help="Loss scaling to improve fp16 numeric stability. Only used when fp16 set to True.\n"
-                             "0 (default value): dynamic loss scaling.\n"
-                             "Positive power of 2: static loss scaling value.\n")
-
-    parser.add_argument('--n_best_size',
-                        type=int,
-                        default=20)
-
-
-    args = parser.parse_args()
 
     random.seed(args.seed)
     np.random.seed(args.seed)
