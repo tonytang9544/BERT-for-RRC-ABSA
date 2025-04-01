@@ -93,34 +93,53 @@ class InputFeatures(object):
         self.segment_ids = segment_ids
         self.start_position = start_position
         self.end_position = end_position
-        
 
-def read_squad_examples(input_file, is_training):
+from nltk.tokenize import sent_tokenize, TweetTokenizer
+
+def find_sentence_index(paragraph_text, idx):
+    sentences = sent_tokenize(paragraph_text)
+    for i in range(len(sentences)):
+        sentence_len = len(sentences[i])
+        if idx > sentence_len:
+            idx -= sentence_len
+        else:
+            return i
+    raise ValueError(f"index {idx} is not found in paragraph {paragraph_text}")
+
+
+
+## this does NOT work, both implementation-wise and idea-wise!
+def read_squad_examples(input_file, is_training, 
+                        corr_sentence_only=False # additional feature here to train only on sentence containing the correct answer
+                        ):
     """Read a SQuAD json file into a list of SquadExample."""
     with open(input_file, "r", encoding='utf-8') as reader:
         input_data = json.load(reader)["data"]
-    def is_whitespace(c):
-        if c == " " or c == "\t" or c == "\r" or c == "\n" or ord(c) == 0x202F:
-            return True
-        return False
+    # def is_whitespace(c):
+    #     if c == " " or c == "\t" or c == "\r" or c == "\n" or ord(c) == 0x202F:
+    #         return True
+    #     return False
     examples = []
+
+    word_tokenizer = TweetTokenizer()
 
     for entry in input_data:
         for paragraph in entry["paragraphs"]:
             paragraph_text = paragraph["context"]
-            doc_tokens = []
-            char_to_word_offset = []
-            prev_is_whitespace = True
-            for c in paragraph_text:
-                if is_whitespace(c):
-                    prev_is_whitespace = True
-                else:
-                    if prev_is_whitespace:
-                        doc_tokens.append(c)
-                    else:
-                        doc_tokens[-1] += c
-                    prev_is_whitespace = False
-                char_to_word_offset.append(len(doc_tokens) - 1)
+            # doc_tokens = []
+            # char_to_word_offset = []
+            # prev_is_whitespace = True
+            # for c in paragraph_text:
+            #     if is_whitespace(c):
+            #         prev_is_whitespace = True
+            #     else:
+            #         if prev_is_whitespace:
+            #             doc_tokens.append(c)
+            #         else:
+            #             doc_tokens[-1] += c
+            #         prev_is_whitespace = False
+            #     char_to_word_offset.append(len(doc_tokens) - 1)
+
 
             for qa in paragraph["qas"]:
                 qas_id = qa["id"]
@@ -128,23 +147,26 @@ def read_squad_examples(input_file, is_training):
                 start_position = None
                 end_position = None
                 orig_answer_text = None
-                if is_training:
+                if is_training:                        
+
                     answer = qa["answers"][0]
                     orig_answer_text = answer["text"]
                     answer_offset = answer["answer_start"]
                     answer_length = len(orig_answer_text)
-                    start_position = char_to_word_offset[answer_offset]
-                    end_position = char_to_word_offset[answer_offset + answer_length - 1]
 
-                    actual_text = " ".join(doc_tokens[start_position:(end_position + 1)])
-                    cleaned_answer_text = " ".join(
-                        whitespace_tokenize(orig_answer_text))
-                    # cleaned_answer_text = "".join(
-                    #     orig_answer_text)
-                    if actual_text.find(cleaned_answer_text) == -1:
-                        logger.warning("Could not find answer: '%s' vs. '%s'",
-                                           actual_text, cleaned_answer_text)
-                        continue
+                    if corr_sentence_only:
+                        start_sentence = find_sentence_index(paragraph_text, answer_offset)
+                        end_sentence = find_sentence_index(paragraph_text, (answer_offset+answer_length))
+                        context = " ".join(sent_tokenize(paragraph_text)[start_sentence:end_sentence])
+                        
+                    else:
+                        context = paragraph_text
+
+                    doc_tokens = word_tokenizer.tokenize(context)
+
+                    start_position = len(word_tokenizer.tokenize(context[:answer_offset]))
+                    end_position = len(word_tokenizer.tokenize(context[:(answer_offset+answer_length)])) -1
+                    print(start_position, " ", end_position)
 
                 example = SquadExample(
                     qas_id=qas_id,
@@ -155,6 +177,7 @@ def read_squad_examples(input_file, is_training):
                     end_position=end_position)
                 examples.append(example)
     return examples
+
 
 
 def convert_examples_to_features(examples, tokenizer, max_seq_length,

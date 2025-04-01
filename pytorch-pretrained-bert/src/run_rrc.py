@@ -36,6 +36,8 @@ from transformers import (
 from torch.optim import AdamW
 
 import squad_data_utils as data_utils
+# import squad_data_utils_v2 as data_utils
+
 import modelconfig
 
 logging.basicConfig(format = '%(asctime)s - %(levelname)s - %(name)s -   %(message)s',
@@ -53,7 +55,7 @@ def train(args):
 
     tokenizer = BertTokenizer.from_pretrained(modelconfig.MODEL_ARCHIVE_MAP[args.bert_model] )
 
-    train_examples = data_utils.read_squad_examples(os.path.join(args.data_dir,"train.json"), is_training=True)
+    train_examples = data_utils.read_squad_examples(os.path.join(args.data_dir,"train.json"), is_training=True, corr_sentence_only=True)
     
     num_train_steps = int(len(train_examples) / args.train_batch_size / args.gradient_accumulation_steps) * args.num_train_epochs
 
