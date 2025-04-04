@@ -35,8 +35,8 @@ from transformers import (
 )
 from torch.optim import AdamW
 
-import squad_data_utils as data_utils
-# import squad_data_utils_v2 as data_utils
+# import squad_data_utils as data_utils
+import squad_data_utils_v3 as data_utils
 
 import modelconfig
 
@@ -55,7 +55,7 @@ def train(args):
 
     tokenizer = BertTokenizer.from_pretrained(modelconfig.MODEL_ARCHIVE_MAP[args.bert_model] )
 
-    train_examples = data_utils.read_squad_examples(os.path.join(args.data_dir,"train.json"), is_training=True, corr_sentence_only=True)
+    train_examples = data_utils.read_squad_examples(os.path.join(args.data_dir,"train.json"), is_training=True)
     
     num_train_steps = int(len(train_examples) / args.train_batch_size / args.gradient_accumulation_steps) * args.num_train_epochs
 
@@ -72,6 +72,8 @@ def train(args):
     all_input_mask = torch.tensor([f.input_mask for f in train_features], dtype=torch.long)
     all_start_positions = torch.tensor([f.start_position for f in train_features], dtype=torch.long)
     all_end_positions = torch.tensor([f.end_position for f in train_features], dtype=torch.long)
+
+    print(all_input_ids[:3], all_segment_ids[:3], all_input_mask[:3], all_start_positions[:3], all_end_positions[:3])
 
     train_data = TensorDataset(all_input_ids, all_segment_ids, all_input_mask, all_start_positions, all_end_positions)
 

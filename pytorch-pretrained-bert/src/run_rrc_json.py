@@ -56,6 +56,15 @@ def train(args):
     # tokenizer = BertTokenizer.from_pretrained(modelconfig.MODEL_ARCHIVE_MAP[args.bert_model] )
     tokenizer = BertTokenizer.from_pretrained(args.bert_model)
 
+    # encoding = tokenizer.batch_encode_plus(
+    #     list(zip(sentences_1, sentences_2)),  # Combine the sentence pairs
+    #     add_special_tokens=True,  # Add [CLS] and [SEP] tokens
+    #     padding=True,             # Pad to the longest sequence in the batch
+    #     truncation=True,          # Truncate if too long
+    #     return_tensors='pt',      # Return PyTorch tensors (you can use 'tf' for TensorFlow)
+    #     max_length=512            # Maximum length for BERT input (adjustable)
+    # )
+
     train_examples = data_utils.read_squad_examples(os.path.join(args.data_dir,"train.json"), is_training=True)
     
     num_train_steps = int(len(train_examples) / args.train_batch_size / args.gradient_accumulation_steps) * args.num_train_epochs
@@ -113,14 +122,14 @@ def train(args):
         model.half()
     model.cuda()
     # Prepare optimizer
-    param_optimizer = [(k, v) for k, v in model.named_parameters() if v.requires_grad==True]
-    param_optimizer = [n for n in param_optimizer if 'pooler' not in n[0]]
-    no_decay = ['bias', 'LayerNorm.bias', 'LayerNorm.weight']
-    optimizer_grouped_parameters = [
-        {'params': [p for n, p in param_optimizer if not any(nd in n for nd in no_decay)], 'weight_decay': 0.01},
-        {'params': [p for n, p in param_optimizer if any(nd in n for nd in no_decay)], 'weight_decay': 0.0}
-        ]
-    t_total = num_train_steps
+    # param_optimizer = [(k, v) for k, v in model.named_parameters() if v.requires_grad==True]
+    # param_optimizer = [n for n in param_optimizer if 'pooler' not in n[0]]
+    # no_decay = ['bias', 'LayerNorm.bias', 'LayerNorm.weight']
+    # optimizer_grouped_parameters = [
+    #     {'params': [p for n, p in param_optimizer if not any(nd in n for nd in no_decay)], 'weight_decay': 0.01},
+    #     {'params': [p for n, p in param_optimizer if any(nd in n for nd in no_decay)], 'weight_decay': 0.0}
+    #     ]
+    # t_total = num_train_steps
     # if args.fp16:
     #     try:
     #         from apex.optimizers import FP16_Optimizer

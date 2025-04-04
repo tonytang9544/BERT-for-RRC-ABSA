@@ -1,21 +1,43 @@
-# Copyright 2018 The Google AI Language Team Authors and The HuggingFace Inc. team and authors from University of Illinois at Chicago.
-# Copyright (c) 2018, NVIDIA CORPORATION.  All rights reserved.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+
     
+from dataclasses import dataclass
 import json
 
+@dataclass
+class InputFeatures(object):
+    """A single set of features of data."""
 
-def read_squad_examples(input_file, is_training=True):
+    input_ids: object
+    segment_ids: object
+    input_mask: object
+    start_position: int
+    end_position: int
+
+
+def read_json_examples(input_file, is_training=True):
     with open(input_file, "r", encoding='utf-8') as reader:
         input_data = json.load(reader)["data"]
+    
+    questions = []
+    contexts = []
+    answer_ids = []
+    answer_texts = []
+    start_positions = []
+
+    for entry in input_data:
+        for paragraph in entry["paragraphs"]:
+            for qa in paragraph["qas"]:
+                contexts.append(paragraph["context"])
+                questions.append(qa["question"])
+                answer_ids.append(qa["id"])
+                answer_texts.append(qa["answers"][0]["text"])
+                start_positions.append(qa["answers"][0]["answer_start"])
+
+    return contexts, questions, answer_ids, answer_texts, start_positions
+
+def read_json_examples_test():
+    contexts, questions, answer_ids, answer_text = read_json_examples("../data/rrc/laptop/train.json")
+    print(contexts[0], questions[0], answer_ids[0], answer_text[0])
+
+if __name__ == "__main__":
+    read_json_examples_test()
