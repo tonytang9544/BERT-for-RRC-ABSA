@@ -20,7 +20,7 @@ def read_json_examples(input_file, is_training=True):
     
     questions = []
     contexts = []
-    answer_ids = []
+    question_ids = []
     answer_texts = []
     start_positions = []
 
@@ -29,11 +29,11 @@ def read_json_examples(input_file, is_training=True):
             for qa in paragraph["qas"]:
                 contexts.append(paragraph["context"])
                 questions.append(qa["question"])
-                answer_ids.append(qa["id"])
+                question_ids.append(qa["id"])
                 answer_texts.append(qa["answers"][0]["text"])
                 start_positions.append(qa["answers"][0]["answer_start"])
 
-    return contexts, questions, answer_ids, answer_texts, start_positions
+    return contexts, questions, question_ids, answer_texts, start_positions
 
 def read_json_examples_test():
     contexts, questions, answer_ids, answer_text = read_json_examples("../data/rrc/laptop/train.json")
