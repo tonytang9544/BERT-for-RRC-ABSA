@@ -5,33 +5,10 @@ from transformers import BertTokenizer, BertForQuestionAnswering
 from torch.optim import AdamW
 from transformers import get_linear_schedule_with_warmup
 
+
+from data_utils import read_json_examples
 import os, datetime, random, json
 import numpy as np
-
-from sklearn.metrics import f1_score
-
-
-def read_json_examples(input_file):
-    with open(input_file, "r", encoding='utf-8') as reader:
-        input_data = json.load(reader)["data"]
-    
-    questions = []
-    contexts = []
-    question_ids = []
-    answer_texts = []
-    start_positions = []
-
-    for entry in input_data:
-        for paragraph in entry["paragraphs"]:
-            for qa in paragraph["qas"]:
-                contexts.append(paragraph["context"])
-                questions.append(qa["question"])
-                question_ids.append(qa["id"])
-                answer_texts.append(qa["answers"][0]["text"])
-                start_positions.append(qa["answers"][0]["answer_start"])
-
-    return contexts, questions, question_ids, answer_texts, start_positions
-
 
 
 class QADataset(Dataset):
@@ -93,43 +70,39 @@ def train(
         model_path="bert-base-uncased", 
         epochs=6, 
         batch_size=32, 
-        gradient_accumulation_steps = 8,
-        learn_rate=3e-5, 
+        learn_rate=5e-5, 
         seed=0, 
-        half_precision=False
+        softmax_temp=0.1
         ):
     
     torch.manual_seed(seed)
     random.seed(seed)
     np.random.seed(seed)
 
-    mini_batch = int(batch_size / gradient_accumulation_steps)
-    assert mini_batch >= 1, f"Invalid batch_size or gradient_accumulation_steps."
+    assert softmax_temp > 0, f"Invalid softmax temperature = {softmax_temp}. Temperature need to be bigger than 0."
     
     tokenizer = BertTokenizer.from_pretrained(model_path)
 
     contexts, questions, question_ids, answer_texts, start_positions = read_json_examples(os.path.join(data_folder, "train.json"))
     train_dataset = QADataset(questions, contexts, answer_texts, start_positions, tokenizer, question_ids)
-    train_dataloader = DataLoader(train_dataset, batch_size=mini_batch, shuffle=True)
+    train_dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
 
     if do_validation:
         contexts, questions, question_ids, answer_texts, start_positions = read_json_examples(os.path.join(data_folder, "dev.json"))
         val_dataset = QADataset(questions, contexts, answer_texts, start_positions, tokenizer, question_ids)
-        val_dataloader = DataLoader(val_dataset, batch_size=mini_batch)
+        val_dataloader = DataLoader(val_dataset, batch_size=batch_size)
 
     # Initialize the model
     model = BertForQuestionAnswering.from_pretrained(model_path)
 
     # Set up the optimizer and learning rate scheduler
-    optimizer = AdamW(model.parameters(), lr=learn_rate, fused=half_precision)
+    optimizer = AdamW(model.parameters(), lr=learn_rate)
     total_steps = len(train_dataloader) * epochs
     scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps=0, num_training_steps=total_steps)
 
     # Set device (GPU or CPU)
     device = "cuda" if torch.cuda.is_available() else "cpu"
     model.to(device)
-    if half_precision:
-        model.half()
 
     print(datetime.datetime.now())
     print(f"use {device}")
@@ -137,43 +110,42 @@ def train(
     print(f"batch size = {batch_size}")
     print(f"Data folder = {data_folder}")
 
+    position_tensor = None
     best_val_loss = float("inf")
-    mini_batch_num = 0
-
 
     # Training loop
     for epoch in range(epochs):
 
         model.train()
         epoch_loss = 0
-        for train_batch in train_dataloader:
+        for batch in train_dataloader:
             
-            batch = {k: v.to(device) for k, v in train_batch.items() if k != "question_ids"}
+            batch = {k: v.to(device) for k, v in batch.items() if k != "question_ids"}
 
             # Zero the gradients
-            # optimizer.zero_grad()            
+            optimizer.zero_grad()            
 
             # Forward pass
             outputs = model(**batch)
-            # start_logits = outputs.start_logits
-            # end_logits = outputs.end_logits
+            start_logits = outputs.start_logits
+            end_logits = outputs.end_logits
 
-            # # Compute the loss
-            # start_loss = F.cross_entropy(start_logits, batch['start_positions'])
-            # end_loss = F.cross_entropy(end_logits, batch['end_positions'])
-            # loss = (start_loss + end_loss) / 2
+            if position_tensor is None:
+                position_tensor = torch.arange(start_logits.shape[1], dtype=float).to(device)
 
-            loss = outputs.loss / gradient_accumulation_steps
+            # compute the prediction with temperature on softmax
+            pred_start = torch.matmul(F.softmax(start_logits/softmax_temp, dim=-1, dtype=float), position_tensor)
+            pred_end = torch.matmul(F.softmax(end_logits/softmax_temp, dim=-1, dtype=float), position_tensor)
 
-            loss.backward()
-            mini_batch_num += 1
+            # Compute the loss
+            start_loss = F.mse_loss(pred_start, batch['start_positions'].to(dtype=torch.double))
+            end_loss = F.mse_loss(pred_end, batch['end_positions'].to(dtype=torch.double))
+            loss = (start_loss + end_loss) / 2
 
             # Backward pass and optimize
-            if mini_batch_num >= gradient_accumulation_steps:
-                optimizer.step()
-                scheduler.step()
-                optimizer.zero_grad()
-                mini_batch_num = 0
+            loss.backward()
+            optimizer.step()
+            scheduler.step()
 
             epoch_loss += loss.item()
 
@@ -191,16 +163,19 @@ def train(
                 # Forward pass
                 with torch.no_grad():
                     outputs = model(**batch)
-                    loss = outputs.loss / gradient_accumulation_steps
-                #     start_logits = outputs.start_logits
-                #     end_logits = outputs.end_logits
+                    start_logits = outputs.start_logits
+                    end_logits = outputs.end_logits
                 
-                # # Compute the loss
-                # start_loss = F.cross_entropy(start_logits, batch['start_positions'])
-                # end_loss = F.cross_entropy(end_logits, batch['end_positions'])
-                # loss = (start_loss + end_loss) / 2
+                # compute the prediction
+                pred_start = torch.matmul(F.softmax(start_logits/softmax_temp, dim=-1, dtype=float), position_tensor)
+                pred_end = torch.matmul(F.softmax(end_logits/softmax_temp, dim=-1, dtype=float), position_tensor)
+
+                # Compute the loss
+                start_loss = F.mse_loss(pred_start, batch['start_positions'].to(dtype=torch.double))
+                end_loss = F.mse_loss(pred_end, batch['end_positions'].to(dtype=torch.double))
+                loss = (start_loss + end_loss) / 2
                 
-                    total_val_loss += loss.item() / gradient_accumulation_steps
+                total_val_loss += loss.item()
             
             ave_val_loss = total_val_loss / len(val_dataloader)
             print(f"{datetime.datetime.now()} validation loss = {ave_val_loss}")
@@ -217,15 +192,14 @@ def test(
         run_folder, 
         batch_size=32, 
         seed=0, 
-        half_precision=False,
-        gradient_accumulation_steps = 8
+        softmax_temp=0.1
         ):
-    
-    model_hidden_dim = 512
     
     torch.manual_seed(seed)
     random.seed(seed)
     np.random.seed(seed) 
+
+    assert softmax_temp > 0, f"Invalid softmax temperature = {softmax_temp}. Temperature need to be bigger than 0."
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -240,13 +214,10 @@ def test(
     # load model
     model = BertForQuestionAnswering.from_pretrained(model_folder).to(device)
 
-    if half_precision:
-        model.half()
-
     model.eval()
 
     predictions = {} 
-    f1_scores = {}
+    position_tensor = None
 
     total_test_loss = 0
     for test_batch in test_dataloader:
@@ -256,49 +227,39 @@ def test(
         # Forward pass
         with torch.no_grad():
             outputs = model(**batch)
-            loss = outputs.loss / gradient_accumulation_steps
+            start_logits = outputs.start_logits
+            end_logits = outputs.end_logits
         
-        # # Compute the loss
-        # start_loss = F.cross_entropy(start_logits, batch['start_positions'])
-        # end_loss = F.cross_entropy(end_logits, batch['end_positions'])
-        # loss = (start_loss + end_loss) / 2
+        if position_tensor is None:
+            position_tensor = torch.arange(start_logits.shape[1], dtype=float).to(device)
+
+        # compute the prediction that enables gradient
+        pred_start = torch.matmul(F.softmax(start_logits/softmax_temp, dim=-1, dtype=float), position_tensor)
+        pred_end = torch.matmul(F.softmax(end_logits/softmax_temp, dim=-1, dtype=float), position_tensor)
+
+        # Compute the loss
+        start_loss = F.mse_loss(pred_start, batch['start_positions'].to(dtype=torch.double))
+        end_loss = F.mse_loss(pred_end, batch['end_positions'].to(dtype=torch.double))
+        loss = (start_loss + end_loss) / 2
         
-            total_test_loss += loss.item()
+        total_test_loss += loss.item()
 
-            # compute the prediction using argmax
-            pred_start = torch.argmax(outputs.start_logits, dim=-1)
-            pred_end = torch.argmax(outputs.end_logits, dim=-1)
+        # compute the prediction using argmax
+        pred_start = torch.argmax(start_logits, dim=-1)
+        pred_end = torch.argmax(end_logits, dim=-1)
 
-            for i in range(len(pred_start)):
-                # print(test_batch["question_ids"])
-                answer_text = ""
-                predict_span = torch.zeros_like(test_batch["input_ids"][i])
-                
-                if pred_start[i] < pred_end[i]:
-                    predict_span[torch.arange(pred_start[i], pred_end[i]+1)] = 1
-                    answer_text = tokenizer.decode(test_batch["input_ids"][i][pred_start[i]:pred_end[i]+1], skip_special_tokens=True)
-                predictions[test_batch["question_ids"][i]] = answer_text
-                
-                true_span = torch.zeros_like(test_batch["input_ids"][i])
-                if test_batch["start_positions"][i] <= model_hidden_dim:
-                    if test_batch["end_positions"][i]+1 <= model_hidden_dim:
-
-                        true_span[torch.arange(test_batch["start_positions"][i], test_batch["end_positions"][i]+1)] = 1
-                    else:
-                        true_span[torch.arange(test_batch["start_positions"][i], model_hidden_dim)] = 1
-                f1_scores[test_batch["question_ids"][i]] = f1_score(true_span, predict_span)
-
+        for i in range(len(pred_start)):
+            answer_test = tokenizer.decode(test_batch["input_ids"][i][pred_start[i]:pred_end[i]+1], skip_special_tokens=True)
+            predictions[test_batch["question_ids"][i]] = answer_test
     
     ave_test_loss = total_test_loss / len(test_dataloader)
     print(f"{datetime.datetime.now()} test loss = {ave_test_loss}")
 
     with open(os.path.join(run_folder, str(seed), "predictions.json"), "w") as js_file:
-        json.dump(predictions, js_file)
-    with open(os.path.join(run_folder, str(seed), "f1s.json"), "w") as js_file:
-        json.dump(f1_scores, js_file)
+            json.dump(predictions, js_file)
 
 
 if __name__ == "__main__":
     for i in range(2):
-        train(data_folder="../../../data/rrc/laptop", run_folder="./results", gradient_accumulation_steps=8, seed=i+1, half_precision=False)
-        test(data_folder="../../../data/rrc/laptop", run_folder="./results", seed=i+1, half_precision=False)
+        train(data_folder="../data/rrc/laptop", run_folder="../run/pt_rrc/laptop", batch_size=8, seed=i+1, epochs=10)
+        test(data_folder="../data/rrc/laptop", run_folder="../run/pt_rrc/laptop", batch_size=8, seed=i+1)

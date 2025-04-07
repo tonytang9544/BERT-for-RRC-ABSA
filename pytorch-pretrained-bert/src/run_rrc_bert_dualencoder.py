@@ -1,7 +1,7 @@
 import torch
 import torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader
-from transformers import BertTokenizer, BertForQuestionAnswering
+from transformers import BertTokenizer, BertForQuestionAnswering, BertModel
 from torch.optim import AdamW
 from transformers import get_linear_schedule_with_warmup
 
@@ -9,6 +9,21 @@ import os, datetime, random, json
 import numpy as np
 
 from sklearn.metrics import f1_score
+
+
+class DualEncoder(torch.nn.Module):
+    def __init__(self, model_name, model_hidden_dim):
+        super().__init__()
+        self.bert = BertModel.from_pretrained(model_name)
+        self.q_linear = torch.nn.Linear(model_hidden_dim, model_hidden_dim)
+        self.k_linear = torch.nn.Linear(model_hidden_dim, model_hidden_dim)
+
+    def forward(self, question, context):
+        q_e = F.normalize(self.q_linear(self.bert(**question).pooler_output), dim=-1)
+        k_e = F.normalize(self.k_linear(self.bert(**context).last_hidden_state), dim=-1)
+
+        return F.sigmoid(torch.einsum('bij,bj->bi', k_e, q_e))
+
 
 
 def read_json_examples(input_file):
@@ -33,7 +48,6 @@ def read_json_examples(input_file):
     return contexts, questions, question_ids, answer_texts, start_positions
 
 
-
 class QADataset(Dataset):
     def __init__(self, questions, contexts, answers, answer_starts, tokenizer, question_ids, max_length=512):
         self.questions = questions
@@ -54,8 +68,7 @@ class QADataset(Dataset):
         question_id = self.question_ids[idx]
 
         # Tokenize the input pair (question, context)
-        encoding = self.tokenizer.encode_plus(
-            context,
+        q_encode = self.tokenizer(
             question,
             add_special_tokens=True,   # Add [CLS] and [SEP] tokens
             max_length=self.max_length,
@@ -63,28 +76,54 @@ class QADataset(Dataset):
             truncation=True,           # Truncate if too long
             return_tensors='pt'        # Return PyTorch tensors
         )
+        q_encode = {k:v.squeeze() for k, v in q_encode.items()}
+        # print(q_encode)
+
+        c_encode = self.tokenizer(
+            context,
+            add_special_tokens=True,   # Add [CLS] and [SEP] tokens
+            max_length=self.max_length,
+            padding='max_length',      # Pad to max_length
+            truncation=True,           # Truncate if too long
+            return_tensors='pt'        # Return PyTorch tensors
+        )
+
+        c_encode = {k:v.squeeze() for k, v in c_encode.items()}
+
 
         # Find the start and end positions of the answer in the context
         start_position = self.answer_starts[idx]
         end_position = start_position + len(answer) - 1
 
-        # align the positions
-        start_token_idx = len(self.tokenizer.tokenize(context[:start_position]))
-        end_token_idx = len(self.tokenizer.tokenize(context[:end_position])) -1
+        answer_span = torch.zeros_like(q_encode["input_ids"])
+        # print(answer_span.shape)
 
-        # If no answer found, set to -1
-        if start_token_idx is None or end_token_idx is None:
-            start_token_idx = end_token_idx = -1
+
+        # align the positions
+        context_len = len(context)
+
+        start_token_idx = end_token_idx = None
+
+
+        if start_position <= context_len:
+            start_token_idx = len(self.tokenizer.tokenize(context[:start_position]))
+
+        if end_position <= context_len:
+            end_token_idx = len(self.tokenizer.tokenize(context[:end_position])) -1
+
+        if start_token_idx is not None:
+            if end_token_idx is not None:
+                answer_span[torch.arange(start_token_idx, end_token_idx+1)] = 1
+            else:
+                answer_span[torch.arange(start_token_idx, len(answer_span))] = 1
+        
 
         return {
-            'input_ids': encoding['input_ids'].flatten(),
-            'attention_mask': encoding['attention_mask'].flatten(),
-            'token_type_ids': encoding['token_type_ids'].flatten(),
-            'start_positions': torch.tensor(start_token_idx, dtype=torch.long),
-            'end_positions': torch.tensor(end_token_idx, dtype=torch.long),
+            "question_encoding": q_encode,
+            "context_encoding": c_encode,
+            "answer_span": answer_span,
             "question_ids": question_id
         }
-
 
 def train(
         data_folder, 
@@ -118,7 +157,7 @@ def train(
         val_dataloader = DataLoader(val_dataset, batch_size=mini_batch)
 
     # Initialize the model
-    model = BertForQuestionAnswering.from_pretrained(model_path)
+    model = DualEncoder(model_path, 768)
 
     # Set up the optimizer and learning rate scheduler
     optimizer = AdamW(model.parameters(), lr=learn_rate, fused=half_precision)
@@ -138,44 +177,31 @@ def train(
     print(f"Data folder = {data_folder}")
 
     best_val_loss = float("inf")
-    mini_batch_num = 0
-
 
     # Training loop
     for epoch in range(epochs):
 
         model.train()
         epoch_loss = 0
-        for train_batch in train_dataloader:
+        for step, batch in enumerate(train_dataloader):
             
-            batch = {k: v.to(device) for k, v in train_batch.items() if k != "question_ids"}
-
-            # Zero the gradients
-            # optimizer.zero_grad()            
+            q_e = {k: v.to(device) for k, v in batch["question_encoding"].items()}
+            c_e = {k: v.to(device) for k, v in batch["context_encoding"].items()}
 
             # Forward pass
-            outputs = model(**batch)
-            # start_logits = outputs.start_logits
-            # end_logits = outputs.end_logits
+            outputs = model(q_e, c_e)
 
-            # # Compute the loss
-            # start_loss = F.cross_entropy(start_logits, batch['start_positions'])
-            # end_loss = F.cross_entropy(end_logits, batch['end_positions'])
-            # loss = (start_loss + end_loss) / 2
+            loss = F.mse_loss(outputs, batch["answer_span"].to(device=device, dtype=torch.float))
 
-            loss = outputs.loss / gradient_accumulation_steps
-
-            loss.backward()
-            mini_batch_num += 1
+            loss.backward()            
 
             # Backward pass and optimize
-            if mini_batch_num >= gradient_accumulation_steps:
+            if step % gradient_accumulation_steps == 0:
                 optimizer.step()
                 scheduler.step()
                 optimizer.zero_grad()
-                mini_batch_num = 0
 
-            epoch_loss += loss.item()
+            epoch_loss += loss.item() / gradient_accumulation_steps
 
         # Print average loss for the epoch
         print(f"{datetime.datetime.now()} Epoch {epoch+1} Loss: {epoch_loss / len(train_dataloader)}")
@@ -186,19 +212,13 @@ def train(
             total_val_loss = 0
             for batch in val_dataloader:
                 # Move batch to GPU if available
-                batch = {k: v.to(device) for k, v in batch.items() if k != "question_ids"}
+                q_e = {k: v.to(device) for k, v in batch["question_encoding"].items()}
+                c_e = {k: v.to(device) for k, v in batch["context_encoding"].items()}
 
                 # Forward pass
                 with torch.no_grad():
-                    outputs = model(**batch)
-                    loss = outputs.loss / gradient_accumulation_steps
-                #     start_logits = outputs.start_logits
-                #     end_logits = outputs.end_logits
-                
-                # # Compute the loss
-                # start_loss = F.cross_entropy(start_logits, batch['start_positions'])
-                # end_loss = F.cross_entropy(end_logits, batch['end_positions'])
-                # loss = (start_loss + end_loss) / 2
+                    outputs = model(q_e, c_e)
+                    loss = F.mse_loss(outputs, batch["answer_span"].to(device=device, dtype=torch.float))
                 
                     total_val_loss += loss.item() / gradient_accumulation_steps
             
@@ -206,8 +226,8 @@ def train(
             print(f"{datetime.datetime.now()} validation loss = {ave_val_loss}")
             if ave_val_loss < best_val_loss:
                 # Save the trained model
-                model.save_pretrained(os.path.join(run_folder, str(seed)))
                 tokenizer.save_pretrained(os.path.join(run_folder, str(seed)))
+                torch.save(model, os.path.join(run_folder, str(seed), "model.pt"))
                 best_val_loss = ave_val_loss
             
 
@@ -222,7 +242,7 @@ def test(
         ):
     
     model_hidden_dim = 512
-    
+
     torch.manual_seed(seed)
     random.seed(seed)
     np.random.seed(seed) 
@@ -238,56 +258,43 @@ def test(
     test_dataloader = DataLoader(test_dataset, batch_size=batch_size)
 
     # load model
-    model = BertForQuestionAnswering.from_pretrained(model_folder).to(device)
+    model = torch.load(os.path.join(run_folder, str(seed), "model.pt"), weights_only=False).to(device)
 
     if half_precision:
         model.half()
 
     model.eval()
 
-    predictions = {} 
+    predictions = {}
     f1_scores = {}
 
     total_test_loss = 0
-    for test_batch in test_dataloader:
+    for batch in test_dataloader:
         # Move batch to GPU if available
-        batch = {k: v.to(device) for k, v in test_batch.items() if k != "question_ids"}
+            q_e = {k: v.to(device) for k, v in batch["question_encoding"].items()}
+            c_e = {k: v.to(device) for k, v in batch["context_encoding"].items()}
 
-        # Forward pass
-        with torch.no_grad():
-            outputs = model(**batch)
-            loss = outputs.loss / gradient_accumulation_steps
-        
-        # # Compute the loss
-        # start_loss = F.cross_entropy(start_logits, batch['start_positions'])
-        # end_loss = F.cross_entropy(end_logits, batch['end_positions'])
-        # loss = (start_loss + end_loss) / 2
+            # Forward pass
+            with torch.no_grad():
+                outputs = model(q_e, c_e)
+                loss = F.mse_loss(outputs, batch["answer_span"].to(device=device, dtype=torch.float))
         
             total_test_loss += loss.item()
 
-            # compute the prediction using argmax
-            pred_start = torch.argmax(outputs.start_logits, dim=-1)
-            pred_end = torch.argmax(outputs.end_logits, dim=-1)
 
-            for i in range(len(pred_start)):
-                # print(test_batch["question_ids"])
-                answer_text = ""
-                predict_span = torch.zeros_like(test_batch["input_ids"][i])
-                
-                if pred_start[i] < pred_end[i]:
-                    predict_span[torch.arange(pred_start[i], pred_end[i]+1)] = 1
-                    answer_text = tokenizer.decode(test_batch["input_ids"][i][pred_start[i]:pred_end[i]+1], skip_special_tokens=True)
-                predictions[test_batch["question_ids"][i]] = answer_text
-                
-                true_span = torch.zeros_like(test_batch["input_ids"][i])
-                if test_batch["start_positions"][i] <= model_hidden_dim:
-                    if test_batch["end_positions"][i]+1 <= model_hidden_dim:
+            for i in range(len(batch["context_encoding"])):
+                answer_tokens = batch["context_encoding"][i]
+                predict_answer_tokens = [answer_tokens[j] for j in range(len(answer_tokens)) if outputs[i][j]>0.5]
+                answer_text = tokenizer.decode(predict_answer_tokens, skip_special_tokens=True)
+                predictions[batch["question_ids"][i]] = answer_text
+                true_span = torch.zeros_like(batch["input_ids"][i])
+                if batch["start_positions"][i] <= model_hidden_dim:
+                    if batch["end_positions"][i]+1 <= model_hidden_dim:
 
-                        true_span[torch.arange(test_batch["start_positions"][i], test_batch["end_positions"][i]+1)] = 1
+                        true_span[torch.arange(batch["start_positions"][i], batch["end_positions"][i]+1)] = 1
                     else:
-                        true_span[torch.arange(test_batch["start_positions"][i], model_hidden_dim)] = 1
-                f1_scores[test_batch["question_ids"][i]] = f1_score(true_span, predict_span)
-
+                        true_span[torch.arange(batch["start_positions"][i], model_hidden_dim)] = 1
+                f1_scores[batch["question_ids"][i]] = f1_score(true_span, torch.where(outputs[i]>0.5))
     
     ave_test_loss = total_test_loss / len(test_dataloader)
     print(f"{datetime.datetime.now()} test loss = {ave_test_loss}")
@@ -300,5 +307,5 @@ def test(
 
 if __name__ == "__main__":
     for i in range(2):
-        train(data_folder="../../../data/rrc/laptop", run_folder="./results", gradient_accumulation_steps=8, seed=i+1, half_precision=False)
-        test(data_folder="../../../data/rrc/laptop", run_folder="./results", seed=i+1, half_precision=False)
+        train(data_folder="../../../data/rrc/laptop", run_folder="./results", gradient_accumulation_steps=8, seed=i+1)
+        test(data_folder="../../../data/rrc/laptop", run_folder="./results", seed=i+1)

@@ -23,6 +23,7 @@ import json
 import numpy as np
 import torch
 from torch.utils.data import TensorDataset, DataLoader, RandomSampler, SequentialSampler
+import torch.nn.functional as F
 
 # from pytorch_pretrained_bert.tokenization import BertTokenizer
 # from pytorch_pretrained_bert.modeling import BertForQuestionAnswering
@@ -113,7 +114,43 @@ def train(args):
     if args.fp16:
         model.half()
     model.cuda()
+    # Prepare optimizer
+    # param_optimizer = [(k, v) for k, v in model.named_parameters() if v.requires_grad==True]
+    # param_optimizer = [n for n in param_optimizer if 'pooler' not in n[0]]
+    # no_decay = ['bias', 'LayerNorm.bias', 'LayerNorm.weight']
+    # optimizer_grouped_parameters = [
+    #     {'params': [p for n, p in param_optimizer if not any(nd in n for nd in no_decay)], 'weight_decay': 0.01},
+    #     {'params': [p for n, p in param_optimizer if any(nd in n for nd in no_decay)], 'weight_decay': 0.0}
+    #     ]
+    # t_total = num_train_steps
+    # if args.fp16:
+    #     try:
+    #         from apex.optimizers import FP16_Optimizer
+    #         from apex.optimizers import FusedAdam
+    #     except ImportError:
+    #         raise ImportError("Please install apex from https://www.github.com/nvidia/apex to use distributed and fp16 training.")
 
+    #     optimizer = FusedAdam(optimizer_grouped_parameters,
+    #                           lr=args.learning_rate,
+    #                           bias_correction=False,
+    #                           max_grad_norm=1.0)
+    #     if args.loss_scale == 0:
+    #         optimizer = FP16_Optimizer(optimizer, dynamic_loss_scale=True)
+    #     else:
+    #         optimizer = FP16_Optimizer(optimizer, static_loss_scale=args.loss_scale)
+
+    # else:
+    #     # optimizer = BertAdam(optimizer_grouped_parameters,
+    #     #                      lr=args.learning_rate,
+    #     #                      warmup=args.warmup_proportion,
+    #     #                      t_total=t_total)
+
+    #     optimizer = AdamW(model.parameters(), lr=args.learning_rate, weight_decay=0.01)
+    #     scheduler = get_linear_schedule_with_warmup(
+    #         optimizer,
+    #         num_warmup_steps=int(args.warmup_proportion * num_train_steps),
+    #         num_training_steps=num_train_steps,
+    #     )
     optimizer = AdamW(model.parameters(), lr=args.learning_rate, weight_decay=0.01, fused=args.fp16)
     scheduler = get_linear_schedule_with_warmup(
         optimizer,
@@ -121,7 +158,7 @@ def train(args):
         num_training_steps=num_train_steps,
     )
 
-    # global_step = 0
+    global_step = 0
     model.train()
     for _ in range(args.num_train_epochs):
         for step, batch in enumerate(train_dataloader):
@@ -135,7 +172,13 @@ def train(args):
                 start_positions=start_positions,
                 end_positions=end_positions,
             )
-            loss = output.loss
+            
+            # compute the prediction
+            position_tensor = torch.arange(output.start_logits.shape[1], dtype=float).cuda()
+
+            pred_start = torch.matmul(F.softmax(output.start_logits/args.softmax_temp, dim=-1, dtype=float), position_tensor)
+            pred_end = torch.matmul(F.softmax(output.end_logits/args.softmax_temp, dim=-1, dtype=float), position_tensor)
+            loss = (F.mse_loss(pred_start, start_positions.to(dtype=torch.double)) + F.mse_loss(pred_end, end_positions.to(dtype=torch.double)))/2
             # print(output.start_logits)
             # print(output.start_logits.shape)
             # input("press any key")
@@ -154,7 +197,7 @@ def train(args):
                 optimizer.step()
                 scheduler.step()
                 optimizer.zero_grad()
-                # global_step += 1
+                global_step += 1
             #>>>> perform validation at the end of each epoch .
         if args.do_valid:
             model.eval()
@@ -172,7 +215,12 @@ def train(args):
                         start_positions=start_positions,
                         end_positions=end_positions,
                     )
-                    loss = output.loss  # Extract the scalar loss
+                    position_tensor = torch.arange(output.start_logits.shape[1], dtype=float).cuda()
+
+                    pred_start = torch.matmul(F.softmax(output.start_logits/args.softmax_temp, dim=-1, dtype=float), position_tensor)
+                    pred_end = torch.matmul(F.softmax(output.end_logits/args.softmax_temp, dim=-1, dtype=float), position_tensor)
+                    loss = (F.mse_loss(pred_start, start_positions.to(dtype=torch.double)) + F.mse_loss(pred_end, end_positions.to(dtype=torch.double)))/2
+
                     losses.append(loss.item() * input_ids.size(0))
 
                     #losses.append(loss.data.item()*input_ids.size(0) )
@@ -195,7 +243,6 @@ def test(args):  # Load a trained model that you have fine-tuned (we assume eval
     tokenizer = BertTokenizer.from_pretrained(modelconfig.MODEL_ARCHIVE_MAP[args.bert_model])
     
     eval_examples = data_utils.read_squad_examples(os.path.join(args.data_dir,"test.json"), is_training=False)
-    # eval_examples = data_utils.read_squad_examples(os.path.join("../data/rrc/rest","test.json"), is_training=False)
 
     eval_features = data_utils.convert_examples_to_features(eval_examples, tokenizer, args.max_seq_length, args.doc_stride, args.max_query_length, is_training=False)
     
@@ -339,6 +386,11 @@ def main():
     parser.add_argument('--n_best_size',
                         type=int,
                         default=20)
+    
+    parser.add_argument("--softmax_temp",
+                        type=float,
+                        default=10,
+                        help="Temperature of the softmax to calculate MSE loss")
 
 
     args = parser.parse_args()

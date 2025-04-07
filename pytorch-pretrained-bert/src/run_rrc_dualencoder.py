@@ -23,6 +23,7 @@ import json
 import numpy as np
 import torch
 from torch.utils.data import TensorDataset, DataLoader, RandomSampler, SequentialSampler
+import torch.nn.functional as F
 
 # from pytorch_pretrained_bert.tokenization import BertTokenizer
 # from pytorch_pretrained_bert.modeling import BertForQuestionAnswering
@@ -31,6 +32,7 @@ from torch.utils.data import TensorDataset, DataLoader, RandomSampler, Sequentia
 from transformers import (
     BertTokenizer,
     BertForQuestionAnswering,
+    BertModel,
     get_linear_schedule_with_warmup,
 )
 from torch.optim import AdamW
@@ -44,6 +46,22 @@ logging.basicConfig(format = '%(asctime)s - %(levelname)s - %(name)s -   %(messa
                     datefmt = '%m/%d/%Y %H:%M:%S',
                     level = logging.INFO)
 logger = logging.getLogger(__name__)
+
+
+class DualEncoder(torch.nn.Module):
+    def __init__(self, model_name, model_hidden_dim):
+        super().__init__()
+        self.bert = BertModel.from_pretrained(model_name)
+        self.q_linear = torch.nn.Linear(model_hidden_dim, model_hidden_dim)
+        self.k_linear = torch.nn.Linear(model_hidden_dim, model_hidden_dim)
+
+    def forward(self, question, context):
+        q_e = F.normalize(self.q_linear(self.bert(**question).pooler_output), dim=-1)
+        k_e = F.normalize(self.k_linear(self.bert(**context).last_hidden_state), dim=-1)
+
+        return F.sigmoid(torch.einsum('bij,bj->bi', k_e, q_e))
+
+
 
 def warmup_linear(x, warmup=0.002):
     if x < warmup:
@@ -106,14 +124,16 @@ def train(args):
         valid_losses=[]
     #<<<<< end of validation declaration
     if not args.bert_model.endswith(".pt"):
-        model = BertForQuestionAnswering.from_pretrained(modelconfig.MODEL_ARCHIVE_MAP[args.bert_model] )
+        # model = BertForQuestionAnswering.from_pretrained(modelconfig.MODEL_ARCHIVE_MAP[args.bert_model] )
+        model = DualEncoder(modelconfig.MODEL_ARCHIVE_MAP[args.bert_model])
+
     else:
         model = torch.load(args.bert_model)
 
     if args.fp16:
         model.half()
     model.cuda()
-
+                    
     optimizer = AdamW(model.parameters(), lr=args.learning_rate, weight_decay=0.01, fused=args.fp16)
     scheduler = get_linear_schedule_with_warmup(
         optimizer,
@@ -121,7 +141,7 @@ def train(args):
         num_training_steps=num_train_steps,
     )
 
-    # global_step = 0
+    global_step = 0
     model.train()
     for _ in range(args.num_train_epochs):
         for step, batch in enumerate(train_dataloader):
@@ -132,10 +152,18 @@ def train(args):
                 input_ids=input_ids,
                 attention_mask=input_mask,
                 token_type_ids=segment_ids,
-                start_positions=start_positions,
-                end_positions=end_positions,
+                # start_positions=start_positions,
+                # end_positions=end_positions,
             )
-            loss = output.loss
+            
+
+
+            # compute the prediction
+            position_tensor = torch.arange(output.start_logits.shape[1], dtype=float).cuda()
+
+            pred_start = torch.matmul(F.softmax(output.start_logits/args.softmax_temp, dim=-1, dtype=float), position_tensor)
+            pred_end = torch.matmul(F.softmax(output.end_logits/args.softmax_temp, dim=-1, dtype=float), position_tensor)
+            loss = (F.mse_loss(pred_start, start_positions.to(dtype=torch.double)) + F.mse_loss(pred_end, end_positions.to(dtype=torch.double)))/2
             # print(output.start_logits)
             # print(output.start_logits.shape)
             # input("press any key")
@@ -154,7 +182,7 @@ def train(args):
                 optimizer.step()
                 scheduler.step()
                 optimizer.zero_grad()
-                # global_step += 1
+                global_step += 1
             #>>>> perform validation at the end of each epoch .
         if args.do_valid:
             model.eval()
@@ -169,10 +197,15 @@ def train(args):
                         input_ids=input_ids,
                         attention_mask=input_mask,
                         token_type_ids=segment_ids,
-                        start_positions=start_positions,
-                        end_positions=end_positions,
+                        # start_positions=start_positions,
+                        # end_positions=end_positions,
                     )
-                    loss = output.loss  # Extract the scalar loss
+                    position_tensor = torch.arange(output.start_logits.shape[1], dtype=float).cuda()
+
+                    pred_start = torch.matmul(F.softmax(output.start_logits/args.softmax_temp, dim=-1, dtype=float), position_tensor)
+                    pred_end = torch.matmul(F.softmax(output.end_logits/args.softmax_temp, dim=-1, dtype=float), position_tensor)
+                    loss = (F.mse_loss(pred_start, start_positions.to(dtype=torch.double)) + F.mse_loss(pred_end, end_positions.to(dtype=torch.double)))/2
+
                     losses.append(loss.item() * input_ids.size(0))
 
                     #losses.append(loss.data.item()*input_ids.size(0) )
@@ -195,7 +228,6 @@ def test(args):  # Load a trained model that you have fine-tuned (we assume eval
     tokenizer = BertTokenizer.from_pretrained(modelconfig.MODEL_ARCHIVE_MAP[args.bert_model])
     
     eval_examples = data_utils.read_squad_examples(os.path.join(args.data_dir,"test.json"), is_training=False)
-    # eval_examples = data_utils.read_squad_examples(os.path.join("../data/rrc/rest","test.json"), is_training=False)
 
     eval_features = data_utils.convert_examples_to_features(eval_examples, tokenizer, args.max_seq_length, args.doc_stride, args.max_query_length, is_training=False)
     
@@ -339,6 +371,11 @@ def main():
     parser.add_argument('--n_best_size',
                         type=int,
                         default=20)
+    
+    parser.add_argument("--softmax_temp",
+                        type=float,
+                        default=0.1,
+                        help="Temperature of the softmax to calculate MSE loss")
 
 
     args = parser.parse_args()

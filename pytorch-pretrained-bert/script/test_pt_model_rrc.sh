@@ -23,16 +23,16 @@ do
     OUTPUT_DIR="../run/"$run_dir/$domain/$run
 
     mkdir -p $OUTPUT_DIR
-    if ! [ -e $OUTPUT_DIR/"valid.json" ] ; then
-        python ../src/run_rrc.py \
-            --bert_model $bert --do_train --do_valid \
-            --gradient_accumulation_steps 8 \
-            --max_seq_length 320 --train_batch_size 32 --learning_rate 5e-5 --num_train_epochs 10 \
-            --output_dir $OUTPUT_DIR --data_dir $DATA_DIR --seed $run > $OUTPUT_DIR/train_log.txt 2>&1
-    fi
+    # if ! [ -e $OUTPUT_DIR/"valid.json" ] ; then
+    #     python ../src/run_rrc.py \
+    #         --bert_model $bert --do_train --do_valid \
+    #         --gradient_accumulation_steps 8 \
+    #         --max_seq_length 320 --train_batch_size 32 --learning_rate 5e-5 --num_train_epochs 10 \
+    #         --output_dir $OUTPUT_DIR --data_dir $DATA_DIR --seed $run > $OUTPUT_DIR/train_log.txt 2>&1
+    # fi
 
     if ! [ -e $OUTPUT_DIR/"predictions.json" ] ; then 
-        python ../src/run_rrc.py \
+        python ../src/test_pt_models.py \
             --bert_model $bert --do_eval --max_seq_length 320 \
             --output_dir $OUTPUT_DIR --data_dir $DATA_DIR --seed $run > $OUTPUT_DIR/test_log.txt 2>&1
 

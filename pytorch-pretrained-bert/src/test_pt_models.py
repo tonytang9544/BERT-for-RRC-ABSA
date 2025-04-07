@@ -213,7 +213,8 @@ def test(args):  # Load a trained model that you have fine-tuned (we assume eval
     eval_dataloader = DataLoader(eval_data, sampler=eval_sampler, batch_size=args.eval_batch_size)
 
     # model = torch.load(os.path.join(args.output_dir, "model.pt") )
-    model = torch.load(os.path.join(args.output_dir, "model.pt"), weights_only=False )
+    # model = torch.load(os.path.join(args.output_dir, "model.pt"), weights_only=False )
+    model = BertForQuestionAnswering.from_pretrained(modelconfig.MODEL_ARCHIVE_MAP[args.bert_model])
 
     model.cuda()
     model.eval()

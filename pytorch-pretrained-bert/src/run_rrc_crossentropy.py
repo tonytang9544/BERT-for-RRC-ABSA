@@ -113,7 +113,7 @@ def train(args):
     if args.fp16:
         model.half()
     model.cuda()
-
+    
     optimizer = AdamW(model.parameters(), lr=args.learning_rate, weight_decay=0.01, fused=args.fp16)
     scheduler = get_linear_schedule_with_warmup(
         optimizer,
@@ -195,7 +195,6 @@ def test(args):  # Load a trained model that you have fine-tuned (we assume eval
     tokenizer = BertTokenizer.from_pretrained(modelconfig.MODEL_ARCHIVE_MAP[args.bert_model])
     
     eval_examples = data_utils.read_squad_examples(os.path.join(args.data_dir,"test.json"), is_training=False)
-    # eval_examples = data_utils.read_squad_examples(os.path.join("../data/rrc/rest","test.json"), is_training=False)
 
     eval_features = data_utils.convert_examples_to_features(eval_examples, tokenizer, args.max_seq_length, args.doc_stride, args.max_query_length, is_training=False)
     
